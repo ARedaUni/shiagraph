@@ -46,6 +46,18 @@ RETURN p, r, friend LIMIT 100
 \`\`\`
 For general questions unrelated to the graph, respond normally without including a Cypher query.`;
 
+// Helper function to split text into word-level chunks
+function splitIntoTokens(text: string, maxLength = 10) {
+  const words = text.split(/\b/);
+  const chunks = [];
+  
+  for (let i = 0; i < words.length; i += maxLength) {
+    chunks.push(words.slice(i, i + maxLength).join(''));
+  }
+  
+  return chunks.filter(chunk => chunk.trim().length > 0);
+}
+
 export async function POST(req: Request) {
   try {
     // Extract query from request body to match clients.ts expectation
@@ -86,18 +98,32 @@ export async function POST(req: Request) {
     const stream = new ReadableStream({
       async start(controller) {
         let fullResponse = '';
+        let buffer = '';
         
         for await (const chunk of result.textStream) {
           // Accumulate the full response
           fullResponse += chunk;
+          buffer += chunk;
           
-          // Format the chunk to match what clients.ts expects
-          const formattedChunk = JSON.stringify({
-            content: chunk
-          });
-          
-          // Send the formatted chunk
-          controller.enqueue(encoder.encode(`data: ${formattedChunk}\n\n`));
+          // Split buffer into smaller chunks for smoother streaming
+          // Only send complete words/tokens
+          if (buffer.length > 0) {
+            const tokens = splitIntoTokens(buffer);
+            if (tokens.length > 0) {
+              // Send each token separately for smoother streaming
+              for (const token of tokens) {
+                const formattedChunk = JSON.stringify({
+                  content: token
+                });
+                controller.enqueue(encoder.encode(`data: ${formattedChunk}\n\n`));
+                
+                // Small delay for more natural typing effect
+                await new Promise(resolve => setTimeout(resolve, 10));
+              }
+              // Clear the buffer after processing tokens
+              buffer = '';
+            }
+          }
         }
         
         // After streaming the content to the client, check for Cypher query

@@ -49,10 +49,11 @@ export function Chat({ id }: { id: string }) {
             lastMessage?.role === "assistant" &&
             message.role === "assistant"
           ) {
-            // Append to the last assistant message
+            // Don't just append content, replace it to avoid possible duplication
+            // This ensures we're using the exact content from the message
             const updatedMessage = {
               ...lastMessage,
-              content: lastMessage.content + message.content,
+              content: message.content,
             };
 
             resolve(updatedMessage.content); // Resolve with the updated content
@@ -70,10 +71,10 @@ export function Chat({ id }: { id: string }) {
 
   // Append function
   const appendAndTrigger = useCallback(
-    async (message: Message) => {
+    async (message: Message): Promise<void> => {
       const inputContent: string = message.content;
       await append(message);
-      return await streamChat({ inputContent, setIsLoading, append });
+      await streamChat({ inputContent, setIsLoading, append });
     },
     [setIsLoading, append]
   );
@@ -109,7 +110,7 @@ export function Chat({ id }: { id: string }) {
   };
 
   return (
-    <div className="flex flex-col w-full h-full pt-4 pb-4 px-4 mx-auto stretch relative">
+    <div className="flex flex-col w-full h-full relative">
       <ChatMessage isLoading={isLoading} messages={messages} />
 
       <ChatInput

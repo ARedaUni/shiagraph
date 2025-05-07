@@ -47,11 +47,20 @@ export async function streamChat({
     }
 
     let done = false;
+    let contentBuffer = '';
+    const UPDATE_THRESHOLD = 5; // Update UI after collecting this many characters
+    
     while (!done) {
       const { value, done: doneReading } = await reader.read();
       done = doneReading;
 
       if (done) {
+        // Flush any remaining content in the buffer
+        if (contentBuffer.length > 0) {
+          assistantMessage.content += contentBuffer;
+          await append(assistantMessage);
+          contentBuffer = '';
+        }
         break;
       }
 
@@ -61,16 +70,30 @@ export async function streamChat({
 
       for (const event of events) {
         if (event.startsWith("data: ")) {
-          const data = JSON.parse(event.slice(6));
+          try {
+            const data = JSON.parse(event.slice(6));
 
-          // Handle different types of events
-          if (data.type === 'graph_update') {
-            // Graph update event - dispatch a custom event to update GraphViewer
-            dispatchGraphUpdateEvent(data);
-          } else if (data.content !== undefined) {
-            // Normal chat content - append to the current message
-            assistantMessage.content += data.content;
-            await append(assistantMessage);
+            // Handle different types of events
+            if (data.type === 'graph_update') {
+              // Graph update event - dispatch a custom event to update GraphViewer
+              dispatchGraphUpdateEvent(data);
+            } else if (data.content !== undefined) {
+              // Collect content in buffer
+              contentBuffer += data.content;
+              
+              // Only update UI when we have enough content or on special characters
+              if (contentBuffer.length >= UPDATE_THRESHOLD || 
+                  contentBuffer.includes('\n') || 
+                  contentBuffer.includes('.') || 
+                  contentBuffer.includes('?') || 
+                  contentBuffer.includes('!')) {
+                assistantMessage.content += contentBuffer;
+                await append(assistantMessage);
+                contentBuffer = '';
+              }
+            }
+          } catch (error) {
+            console.error("Error parsing SSE data:", error, event);
           }
         }
       }

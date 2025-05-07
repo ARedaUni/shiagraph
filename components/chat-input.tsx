@@ -41,26 +41,11 @@ export function ChatInput({
   };
 
   return (
-    <div
-      className={cn(
-        "w-full",
-        messages !== undefined && messages.length > 0
-          ? "absolute bottom-0 left-0 right-0 bg-background border-t"
-          : "absolute bottom-4 left-0 right-0 top-6 flex flex-col items-center justify-center"
-      )}
-    >
+    <div className="absolute bottom-0 left-0 right-0 border-t bg-background">
       <form
         onSubmit={handleSubmit}
-        className={cn(
-          "w-full mx-auto",
-          messages !== undefined && messages.length > 0 ? "px-2 py-2" : "px-3"
-        )}
+        className="w-full mx-auto px-4 py-2"
       >
-        {messages === undefined ||
-          (messages.length === 0 && (
-            <div className="mb-6">
-            </div>
-          ))}
         <div className="relative flex flex-col w-full gap-2 bg-muted rounded-xl border border-input">
           <Textarea
             ref={inputRef}

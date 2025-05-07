@@ -46,7 +46,7 @@ export default function RootLayout({
       // https://github.com/pacocoursey/next-themes?tab=readme-ov-file#with-app
       suppressHydrationWarning
     >
-      <body className={cn('font-sans antialiased', fontSans.variable)}>
+      <body className={cn('font-sans antialiased min-h-screen flex flex-col', fontSans.variable)}>
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"
@@ -54,7 +54,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <Header />
-          {children}
+          <main className="flex-1 w-full h-full">{children}</main>
           <Footer />
           <Toaster />
         </ThemeProvider>
