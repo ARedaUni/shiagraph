@@ -6,7 +6,6 @@ import { fillMessageParts, generateUUID } from "@/lib/utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import ChatMessage from "./chat-message";
-import { streamChat } from "@/lib/clients";
 import { queryLangChainGraph } from "@/lib/langchain-client";
 
 interface ChatProps {
@@ -17,10 +16,9 @@ interface ChatProps {
     nodeCount: number;
     nodeLabels?: string[];
   };
-  useLangChain?: boolean; // New prop to toggle LangChain usage
 }
 
-export function Chat({ id, onCypherQuery, graphMetadata, useLangChain = false }: ChatProps) {
+export function Chat({ id, onCypherQuery, graphMetadata }: ChatProps) {
   // Input state and handlers.
   const initialInput = "";
   const [inputContent, setInputContent] = useState<string>(initialInput);
@@ -81,27 +79,17 @@ export function Chat({ id, onCypherQuery, graphMetadata, useLangChain = false }:
     [setMessages]
   );
 
-  // Process user input - Use either LangChain or original flow
+  // Process user input - Using LangChain implementation
   const processInput = useCallback(
     async (input: string) => {
-      if (useLangChain) {
-        // Use LangChain Graph API with streaming
-        await queryLangChainGraph({ 
-          question: input, 
-          setIsLoading, 
-          append, 
-          graphMetadata,
-          useStreaming: true // Enable streaming
-        });
-      } else {
-        // Use original stream chat API
-        await streamChat({ 
-          inputContent: input, 
-          setIsLoading, 
-          append, 
-          graphMetadata 
-        });
-      }
+      // Use LangChain Graph API with streaming
+      await queryLangChainGraph({ 
+        question: input, 
+        setIsLoading, 
+        append, 
+        graphMetadata,
+        useStreaming: true // Enable streaming
+      });
       
       // Handle cypher query extraction if needed (for graph visualization)
       if (onCypherQuery && input.toLowerCase().includes('cypher:')) {
@@ -112,7 +100,7 @@ export function Chat({ id, onCypherQuery, graphMetadata, useLangChain = false }:
         }
       }
     },
-    [setIsLoading, append, onCypherQuery, graphMetadata, useLangChain]
+    [setIsLoading, append, onCypherQuery, graphMetadata]
   );
 
   // Append function

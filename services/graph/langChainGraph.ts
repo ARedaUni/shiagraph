@@ -50,6 +50,8 @@ For relationships, use the syntax -[r:RELATIONSHIP_TYPE]-> with the proper direc
 When matching patterns, focus on finding patterns that connect relevant nodes
 to answer the user's question effectively.
 
+IMPORTANT: Return ONLY the raw Cypher query without any markdown formatting, code blocks, or explanations.
+
 {examples}
 
 Question: {question}
@@ -71,7 +73,7 @@ The query returned the following results:
 {result}
 
 Based on the graph database results, provide a comprehensive, natural language answer to the question.
-If the results are empty, say you don't have enough information.
+If the results are empty or there was a query error, explain that no data was found that matches their query and suggest they try a different question or rephrase their query.
 If you need to list items, format them in a natural, conversational way.
 Include relevant details from the results to make your answer informative.
 After your answer, suggest 2-3 related follow-up questions the user might want to ask.`;
@@ -95,7 +97,7 @@ export class LangChainGraph {
   constructor(config: LangChainGraphConfig) {
     this.config = config;
     this.model = new ChatGoogleGenerativeAI({
-      model: config.model || "gemini-pro",
+      model: config.model || "gemini-flash-2.0-001",
       temperature: 0,
     });
   }
@@ -120,14 +122,14 @@ export class LangChainGraph {
       
       // Create the few-shot prompt template
       const examplePrompt = PromptTemplate.fromTemplate(
-        "User input: {question}\nCypher query: {query}"
+        "User input: {question}\nCypher query (raw, without markdown): {query}"
       );
       
       this.cypherPromptTemplate = new FewShotPromptTemplate({
         examples: CYPHER_EXAMPLES,
         examplePrompt,
-        prefix: "Here are some examples of questions and their corresponding Cypher queries:",
-        suffix: "\nUser input: {question}\nCypher query:",
+        prefix: "Here are some examples of questions and their corresponding raw Cypher queries (without any markdown formatting):",
+        suffix: "\nUser input: {question}\nCypher query (without markdown):",
         inputVariables: ["question"],
       });
       
@@ -160,6 +162,16 @@ export class LangChainGraph {
     return this.graph.getSchema();
   }
   
+  // Helper method to clean Cypher queries from markdown formatting
+  private cleanCypherQuery(query: string): string {
+    // Remove markdown code block formatting if present
+    const markdownMatch = query.match(/```(?:cypher)?\s*([\s\S]*?)```/i);
+    if (markdownMatch && markdownMatch[1]) {
+      return markdownMatch[1].trim();
+    }
+    return query.trim();
+  }
+
   async streamQuery(question: string): Promise<ReadableStream<Uint8Array>> {
     if (!this.chain || !this.graph) {
       throw new Error("Chain or graph is not initialized");
@@ -180,7 +192,10 @@ export class LangChainGraph {
     });
     
     const cypherResult = await this.model.invoke(cypherPrompt);
-    const cypherQuery = cypherResult.content.toString().trim();
+    // Clean the cypher query before using it
+    const cypherQuery = this.cleanCypherQuery(cypherResult.content.toString());
+    
+    console.log("Generated Cypher query:", cypherQuery);
 
     // Execute the query against Neo4j
     let results;
@@ -188,6 +203,7 @@ export class LangChainGraph {
       results = await this.graph.query(cypherQuery);
     } catch (error) {
       console.error("Error executing Cypher query:", error);
+      console.error("Problematic query:", cypherQuery);
       results = [];
     }
     
@@ -257,11 +273,13 @@ export class LangChainGraph {
         });
         
         const cypherResult = await this.model.invoke(cypherPrompt);
-        return cypherResult.content.toString().trim();
+        // Clean the cypher query before returning it
+        return this.cleanCypherQuery(cypherResult.content.toString());
       };
       
       // Generate Cypher query
       const cypherQuery = await generateCypherQuery();
+      console.log("Generated Cypher query:", cypherQuery);
       
       // Execute query and get results
       let results;
@@ -269,6 +287,7 @@ export class LangChainGraph {
         results = await this.graph.query(cypherQuery);
       } catch (error) {
         console.error("Error executing Cypher query:", error);
+        console.error("Problematic query:", cypherQuery);
         results = [];
       }
       
