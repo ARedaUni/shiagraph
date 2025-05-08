@@ -8,7 +8,12 @@ import useSWR from "swr";
 import ChatMessage from "./chat-message";
 import { streamChat } from "@/lib/clients";
 
-export function Chat({ id }: { id: string }) {
+interface ChatProps {
+  id: string;
+  onCypherQuery?: (query: string) => void;
+}
+
+export function Chat({ id, onCypherQuery }: ChatProps) {
   // Input state and handlers.
   const initialInput = "";
   const [inputContent, setInputContent] = useState<string>(initialInput);
@@ -74,9 +79,19 @@ export function Chat({ id }: { id: string }) {
     async (message: Message): Promise<void> => {
       const inputContent: string = message.content;
       await append(message);
+      
+      // Check if the message contains a Cypher query and pass it to parent if needed
+      if (onCypherQuery && inputContent.toLowerCase().includes('cypher:')) {
+        // Extract the Cypher query (assuming it comes after "cypher:")
+        const query = inputContent.substring(inputContent.toLowerCase().indexOf('cypher:') + 7).trim();
+        if (query) {
+          onCypherQuery(query);
+        }
+      }
+      
       await streamChat({ inputContent, setIsLoading, append });
     },
-    [setIsLoading, append]
+    [setIsLoading, append, onCypherQuery]
   );
 
   // handlers
@@ -97,11 +112,20 @@ export function Chat({ id }: { id: string }) {
       };
       append(newMessage);
 
+      // Check if the message contains a Cypher query and pass it to parent if needed
+      if (onCypherQuery && inputContent.toLowerCase().includes('cypher:')) {
+        // Extract the Cypher query (assuming it comes after "cypher:")
+        const query = inputContent.substring(inputContent.toLowerCase().indexOf('cypher:') + 7).trim();
+        if (query) {
+          onCypherQuery(query);
+        }
+      }
+
       setInputContent("");
 
       await streamChat({ inputContent, setIsLoading, append });
     },
-    [inputContent, setInputContent, setIsLoading, append]
+    [inputContent, setInputContent, setIsLoading, append, onCypherQuery]
   );
 
   // handle form submission functionality

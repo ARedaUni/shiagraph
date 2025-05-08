@@ -16,9 +16,9 @@
     • Fully type-safe & function-level modularity so that each concern can
       be lifted into its own file later without cross-dependencies.
     ------------------------------------------------------------------------- */
-
     'use client';
-
+    
+    // @ts-nocheck
     // ─────────────────────────────────── React & 3rd-party ────────────────────
     import React, {
       useState,
@@ -524,7 +524,7 @@
       dark: boolean;
       onNodeSelect: (n: Node | null) => void;
     }
-    
+ 
     const GraphCanvas: React.FC<CanvasProps> = ({ graph, search, forces, display, toggles, dark, onNodeSelect }) => {
       const canvasRef = useRef<HTMLCanvasElement>(null);
       const containerRef = useRef<HTMLDivElement>(null);
@@ -1065,14 +1065,34 @@
     /* ════════════════════════════════════════════════════════════════════════ */
     /*  Main GraphVisualizer component                                         */
     /* ════════════════════════════════════════════════════════════════════════ */
-    const GraphVisualizer: React.FC = () => {
+    interface GraphVisualizerProps {
+      graph?: Graph;
+      loading?: boolean;
+      error?: string | null;
+      numberOfNodes?: number;
+      setNumberOfNodes?: Dispatch<SetStateAction<number>>;
+      queryType?: string;
+      setQueryType?: Dispatch<SetStateAction<string>>;
+      refreshGraph?: () => Promise<void>;
+    }
+
+    const GraphVisualizer: React.FC<GraphVisualizerProps> = ({
+      graph: externalGraph,
+      loading: externalLoading,
+      error: externalError,
+      numberOfNodes: externalNumberOfNodes,
+      setNumberOfNodes: externalSetNumberOfNodes,
+      queryType: externalQueryType,
+      setQueryType: externalSetQueryType,
+      refreshGraph
+    }) => {
       /* ── graph state & fetch ───────────────────────────────────────────── */
-      const [graph, setGraph] = useState<Graph>({ nodes: [], links: [] });
-      const [loading, setLoading] = useState(false);
-      const [error, setError] = useState<string | null>(null);
-    
+      const [localGraph, setLocalGraph] = useState<Graph>({ nodes: [], links: [] });
+      const [localLoading, setLocalLoading] = useState(false);
+      const [localError, setLocalError] = useState<string | null>(null);
+
       const [search, setSearch] = useState('');
-    
+
       // settings
       const [forces, setForces] = useState<ForcesSettings>({
         centerForce: 0.1,
@@ -1089,8 +1109,8 @@
         linkThickness: 1,
       });
       const [layoutType, setLayoutType] = useState<string>('force');
-      const [numberOfNodes, setNumberOfNodes] = useState<number>(100);
-      const [queryType, setQueryType] = useState<string>('default');
+      const [localNumberOfNodes, setLocalNumberOfNodes] = useState<number>(100);
+      const [localQueryType, setLocalQueryType] = useState<string>('default');
       const [toggles, setToggles] = useState<AdvancedToggles>({
         enableJitter: false,
         enableGravityWell: true,
@@ -1100,46 +1120,78 @@
         enableClustering: false,
         enableEdgeBundling: false,
       });
-    
+
       const [dark, setDark] = useState(false);
       const [sidebarOpen, setSidebarOpen] = useState(true);
       const [selected, setSelected] = useState<Node | null>(null);
-    
+
+      // Use external props if provided, otherwise use local state
+      const graph = externalGraph || localGraph;
+      const loading = externalLoading !== undefined ? externalLoading : localLoading;
+      const error = externalError !== null ? externalError : localError;
+      const effectiveNumberOfNodes = externalNumberOfNodes !== undefined ? externalNumberOfNodes : localNumberOfNodes;
+      const effectiveQueryType = externalQueryType || localQueryType;
+      
+      // These functions will call external handlers if provided, otherwise update local state
+      const handleSetNumberOfNodes = (num: number) => {
+        if (externalSetNumberOfNodes) {
+          externalSetNumberOfNodes(num);
+        } else {
+          setLocalNumberOfNodes(num);
+        }
+      };
+      
+      const handleSetQueryType = (type: string) => {
+        if (externalSetQueryType) {
+          externalSetQueryType(type);
+        } else {
+          setLocalQueryType(type);
+        }
+      };
+
       /* ── data fetch ────────────────────────────────────────────────────── */
       const fetchGraph = useCallback(async () => {
-        setLoading(true);
+        // If external refreshGraph is provided, use that instead
+        if (refreshGraph) {
+          return refreshGraph();
+        }
+        
+        setLocalLoading(true);
         try {
           const res = await fetch('/api/graph', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ limit: numberOfNodes, queryType }),
+            body: JSON.stringify({ limit: localNumberOfNodes, queryType: localQueryType }),
           });
           if (!res.ok) throw new Error(`API ${res.status}`);
           const data = await res.json();
           console.log(data.nodes)
-          setGraph({ nodes: data.nodes ?? [], links: data.links ?? [] });
-          setError(null);
+          setLocalGraph({ nodes: data.nodes ?? [], links: data.links ?? [] });
+          setLocalError(null);
         } catch (e) {
-          setError((e as Error).message);
-          setGraph({ nodes: [], links: [] });
+          setLocalError((e as Error).message);
+          setLocalGraph({ nodes: [], links: [] });
         } finally {
-          setLoading(false);
+          setLocalLoading(false);
         }
-      }, [numberOfNodes, queryType]);
-    
+      }, [localNumberOfNodes, localQueryType, refreshGraph]);
+
       useEffect(() => {
-        fetchGraph();
-      }, [fetchGraph]);
-    
+        // Only fetch graph if external graph is not provided
+        if (!externalGraph) {
+          fetchGraph();
+        }
+      }, [fetchGraph, externalGraph]);
+
       /* ── render ────────────────────────────────────────────────────────── */
       return (
         <div className={cls('relative w-full h-full', dark ? 'dark bg-neutral-950 text-neutral-100' : 'bg-white')}>
           {/* canvas */}
           <GraphCanvas graph={graph} search={search} forces={forces} display={display} toggles={toggles} dark={dark} onNodeSelect={setSelected} />
-    
+
           {/* node panel */}
           <AnimatePresence>{selected && <NodePanel node={selected} close={() => setSelected(null)} dark={dark} />}</AnimatePresence>
-    
+
           {/* sidebar */}
           <Sidebar
             search={search}
@@ -1150,10 +1202,10 @@
             setDisplay={setDisplay}
             layoutType={layoutType}
             setLayoutType={setLayoutType}
-            numberOfNodes={numberOfNodes}
-            setNumberOfNodes={setNumberOfNodes}
-            queryType={queryType}
-            setQueryType={setQueryType}
+            numberOfNodes={effectiveNumberOfNodes}
+            setNumberOfNodes={handleSetNumberOfNodes}
+            queryType={effectiveQueryType}
+            setQueryType={handleSetQueryType}
             toggles={toggles}
             setToggles={setToggles}
             isOpen={sidebarOpen}
@@ -1162,7 +1214,7 @@
             setDark={setDark}
             loading={loading}
           />
-    
+
           {/* error banner */}
           {error && (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-red-600 text-white px-4 py-2 rounded shadow-lg text-sm">

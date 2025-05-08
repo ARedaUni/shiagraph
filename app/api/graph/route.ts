@@ -1,4 +1,3 @@
-// @ts-nocheck    ← simplify demo typings; lift if you want full‑strict.
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import neo4j, { int, isInt } from 'neo4j-driver';
@@ -6,7 +5,6 @@ import neo4j, { int, isInt } from 'neo4j-driver';
 const uri = process.env.NEO4J_URI!;
 const user = process.env.NEO4J_USER!;
 const password = process.env.NEO4J_PASSWORD!;
-console.log(uri, user, password);
 // Create driver with proper error handling
 let driver;
 try {
@@ -113,21 +111,21 @@ export async function POST(req: NextRequest) {
       let errorMessage = 'Database query error';
       let statusCode = 400;
       
-      if (error.code === 'Neo.ClientError.Security.Unauthorized') {
+      if ((error as any).code === 'Neo.ClientError.Security.Unauthorized') {
         errorMessage = 'Authentication failed - check Neo4j credentials';
-      } else if (error.code === 'Neo.ClientError.Statement.SyntaxError') {
+      } else if ((error as any).code === 'Neo.ClientError.Statement.SyntaxError') {
         errorMessage = 'Cypher syntax error in query';
-      } else if (error.code?.includes('ServiceUnavailable')) {
+      } else if ((error as any).code?.includes('ServiceUnavailable')) {
         errorMessage = 'Neo4j database is not accessible';
         statusCode = 503;
-      } else if (error.code === 'Neo.ClientError.Statement.ArgumentError') {
+      } else if ((error as any).code === 'Neo.ClientError.Statement.ArgumentError') {
         errorMessage = 'Invalid argument in Cypher query - check parameter types';
       }
       
       return NextResponse.json({ 
         error: errorMessage, 
-        details: error.message,
-        code: error.code || 'UNKNOWN'
+        details: (error as any).message,
+        code: (error as any).code || 'UNKNOWN'
       }, { status: statusCode });
     } finally {
       await session.close();
