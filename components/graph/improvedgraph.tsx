@@ -173,7 +173,7 @@
         loading,
       }) => {
         /* ── reducer to manage section state ─────────────────────────────── */
-        type Section = 'search' | 'forces' | 'display' | 'layout' | 'advanced';
+        type Section = 'search' | 'forces' | 'display' | 'advanced';
         interface State { open: Record<Section, boolean>; }
         type Action = { type: 'TOGGLE'; key: Section } | { type: 'SET'; key: Section; val: boolean };
         const [state, dispatch] = React.useReducer(
@@ -187,11 +187,10 @@
                 return s;
             }
           },
-          { open: { search: true, forces: false, display: false, layout: false, advanced: false } }
+          { open: { search: true, forces: false, display: false, advanced: false } }
         );
     
         /* ── constants ───────────────────────────────────────────────────── */
-        const layoutOptions = useMemo(() => ['force', 'tree', 'radial', 'grid'], []);
         const queryOptions = useMemo(
           () => ['default', 'all', 'ideology', 'company', 'institution', 'community', 'power'],
           []
@@ -207,46 +206,81 @@
           step: number;
           onChange: (n: number) => void;
         }> = ({ label, val, min, max, step, onChange }) => (
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs">
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs font-medium">
               <span>{label}</span>
-              <span>{val.toFixed(1)}</span>
+              <span className="font-mono">{val.toFixed(1)}</span>
             </div>
-            <Slider min={min} max={max} step={step} value={[val]} onValueChange={([v]) => onChange(v)} />
+            <Slider 
+              min={min} 
+              max={max} 
+              step={step} 
+              value={[val]} 
+              onValueChange={([v]) => onChange(v)}
+              className={dark ? "accent-blue-500" : "accent-blue-600"} 
+            />
           </div>
         );
     
         const ToggleRow: React.FC<{ label: string; value: boolean; onChange: (b: boolean) => void }> = ({ label, value, onChange }) => (
-          <div className="flex items-center justify-between py-1 text-xs">
-            <span>{label}</span>
-            <Switch checked={value} onCheckedChange={onChange} />
+          <div className="flex items-center justify-between py-1.5 text-sm">
+            <span className="font-medium">{label}</span>
+            <Switch 
+              checked={value} 
+              onCheckedChange={onChange} 
+              className={cls(
+                value && (dark ? "bg-blue-500" : "bg-blue-600"),
+                !value && (dark ? "bg-neutral-700" : "bg-neutral-300")
+              )}
+            />
           </div>
         );
     
         /* ── render ──────────────────────────────────────────────────────── */
-        const sideVariants = { open: { width: '280px', opacity: 1 }, closed: { width: '52px', opacity: 0.9 } };
+        const sideVariants = { open: { width: '300px', opacity: 1 }, closed: { width: '52px', opacity: 0.9 } };
         const chevronVariants = { open: { rotate: 0 }, closed: { rotate: 180 } };
     
         return (
           <motion.aside
             className={cls(
-              'absolute top-4 left-4 z-30 rounded-2xl shadow-xl backdrop-blur overflow-hidden',
-              dark ? 'bg-neutral-900/90 text-neutral-100' : 'bg-white/90 text-neutral-900'
+              'absolute top-4 left-4 z-30 rounded-2xl shadow-xl backdrop-blur overflow-hidden border',
+              dark 
+                ? 'bg-neutral-900/95 text-neutral-100 border-neutral-700' 
+                : 'bg-white/95 text-neutral-800 border-neutral-200'
             )}
             animate={isOpen ? 'open' : 'closed'}
             variants={sideVariants}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
           >
             {/* header */}
-            <header className="flex items-center justify-between p-3 border-b border-neutral-800">
-              {isOpen && <h2 className="font-bold text-lg">Settings</h2>}
+            <header className={cls(
+              "flex items-center justify-between p-3 border-b",
+              dark ? "border-neutral-700" : "border-neutral-200"
+            )}>
+              {isOpen && <h2 className="font-bold text-lg tracking-tight">Graph Settings</h2>}
               <div className="flex gap-2 ml-auto items-center">
                 {isOpen && (
-                  <Button size="icon" variant="ghost" onClick={() => setDark(!dark)} className="text-neutral-400 hover:text-neutral-100">
+                  <Button 
+                    size="icon" 
+                    variant="ghost" 
+                    onClick={() => setDark(!dark)} 
+                    className={cls(
+                      "hover:bg-opacity-20",
+                      dark ? "text-neutral-300 hover:bg-neutral-700" : "text-neutral-600 hover:bg-neutral-200"
+                    )}
+                  >
                     {dark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
                   </Button>
                 )}
-                <Button size="icon" variant="ghost" onClick={() => setIsOpen(!isOpen)} className="text-neutral-400 hover:text-neutral-100">
+                <Button 
+                  size="icon" 
+                  variant="ghost" 
+                  onClick={() => setIsOpen(!isOpen)} 
+                  className={cls(
+                    "hover:bg-opacity-20",
+                    dark ? "text-neutral-300 hover:bg-neutral-700" : "text-neutral-600 hover:bg-neutral-200"
+                  )}
+                >
                   <motion.div animate={isOpen ? 'open' : 'closed'} variants={chevronVariants}>
                     <ChevronDown className="h-4 w-4" />
                   </motion.div>
@@ -259,21 +293,71 @@
               {isOpen && (
                 <motion.div
                   key="body"
-                  className="p-4 space-y-5 overflow-y-auto scrollbar-thin max-h-[calc(100vh-140px)]"
+                  className="p-4 space-y-6 overflow-y-auto scrollbar-thin max-h-[calc(100vh-140px)]"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                 >
                   {/* Search */}
-                  <Section title="Search" open={state.open.search} toggle={() => dispatch({ type: 'TOGGLE', key: 'search' })}>
-                    <div className="relative mb-2">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
-                      <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find node…" className="pl-9 bg-neutral-800 border-neutral-700" />
+                  <Section 
+                    title="Search" 
+                    open={state.open.search} 
+                    toggle={() => dispatch({ type: 'TOGGLE', key: 'search' })}
+                    dark={dark}
+                  >
+                    <div className="relative mb-3">
+                      <Search className={cls(
+                        "absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4",
+                        dark ? "text-neutral-400" : "text-neutral-500"
+                      )} />
+                      <Input 
+                        value={search} 
+                        onChange={(e) => setSearch(e.target.value)} 
+                        placeholder="Find node…" 
+                        className={cls(
+                          "pl-9 h-9 font-medium text-sm",
+                          dark 
+                            ? "bg-neutral-800 border-neutral-700 placeholder-neutral-500 focus:border-neutral-600" 
+                            : "bg-neutral-100 border-neutral-200 placeholder-neutral-500 focus:border-neutral-300"
+                        )} 
+                      />
                     </div>
+                    
+                    {/* # of Nodes (moved from Layout section) */}
+                    <div className="space-y-1.5 mt-4">
+                      <div className="text-sm font-medium">Number of Nodes</div>
+                      <div className="flex flex-wrap gap-2">
+                        {nodeOptions.map(num => (
+                          <Button
+                            key={num}
+                            variant={numberOfNodes === num ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setNumberOfNodes(num)}
+                            className={cls(
+                              "text-xs px-2 py-0 h-7",
+                              numberOfNodes === num 
+                                ? (dark ? "bg-blue-600 hover:bg-blue-700" : "bg-blue-600 hover:bg-blue-700") 
+                                : (dark 
+                                  ? "bg-neutral-800 border-neutral-700 hover:bg-neutral-700" 
+                                  : "bg-white border-neutral-200 hover:bg-neutral-100")
+                            )}
+                          >
+                            {num}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                    
+                 
                   </Section>
     
                   {/* Forces */}
-                  <Section title="Forces" open={state.open.forces} toggle={() => dispatch({ type: 'TOGGLE', key: 'forces' })}>
+                  <Section 
+                    title="Forces" 
+                    open={state.open.forces} 
+                    toggle={() => dispatch({ type: 'TOGGLE', key: 'forces' })}
+                    dark={dark}
+                  >
                     <SliderRow label="Center" val={forces.centerForce} min={0} max={1} step={0.02} onChange={(v) => setForces((f) => ({ ...f, centerForce: v }))} />
                     <SliderRow label="Repel" val={forces.repelForce} min={-1500} max={0} step={50} onChange={(v) => setForces((f) => ({ ...f, repelForce: v }))} />
                     <SliderRow label="Link dist" val={forces.linkDistance} min={20} max={300} step={10} onChange={(v) => setForces((f) => ({ ...f, linkDistance: v }))} />
@@ -283,22 +367,25 @@
                   </Section>
     
                   {/* Display */}
-                  <Section title="Display" open={state.open.display} toggle={() => dispatch({ type: 'TOGGLE', key: 'display' })}>
+                  <Section 
+                    title="Display" 
+                    open={state.open.display} 
+                    toggle={() => dispatch({ type: 'TOGGLE', key: 'display' })}
+                    dark={dark}
+                  >
                     <ToggleRow label="Arrows" value={display.showArrows} onChange={(b) => setDisplay((d) => ({ ...d, showArrows: b }))} />
                     <ToggleRow label="Link labels" value={display.showLinkLabels} onChange={(b) => setDisplay((d) => ({ ...d, showLinkLabels: b }))} />
                     <SliderRow label="Node size" val={display.nodeSize} min={2} max={20} step={1} onChange={(v) => setDisplay((d) => ({ ...d, nodeSize: v }))} />
                     <SliderRow label="Link width" val={display.linkThickness} min={1} max={10} step={1} onChange={(v) => setDisplay((d) => ({ ...d, linkThickness: v }))} />
                   </Section>
     
-                  {/* Layout */}
-                  <Section title="Layout" open={state.open.layout} toggle={() => dispatch({ type: 'TOGGLE', key: 'layout' })}>
-                    <SelectRow label="Layout" value={layoutType} options={layoutOptions} onChange={setLayoutType} />
-                    <SelectRow label="# Nodes" value={String(numberOfNodes)} options={nodeOptions.map(String)} onChange={(v) => setNumberOfNodes(parseInt(v))} />
-                    <SelectRow label="Query" value={queryType} options={queryOptions} onChange={setQueryType} />
-                  </Section>
-    
                   {/* Advanced */}
-                  <Section title="Advanced" open={state.open.advanced} toggle={() => dispatch({ type: 'TOGGLE', key: 'advanced' })}>
+                  <Section 
+                    title="Advanced" 
+                    open={state.open.advanced} 
+                    toggle={() => dispatch({ type: 'TOGGLE', key: 'advanced' })}
+                    dark={dark}
+                  >
                     {(
                       [
                         ['Jitter', 'enableJitter'],
@@ -320,8 +407,14 @@
                   </Section>
     
                   {loading && (
-                    <div className="flex items-center gap-2 text-xs text-neutral-400">
-                      <Loader className="animate-spin h-4 w-4" /> Loading…
+                    <div className="flex items-center gap-2 text-sm mt-2 py-2 px-3 rounded-lg bg-opacity-20 border border-opacity-20 animate-pulse text-center justify-center"
+                      style={{
+                        backgroundColor: dark ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.1)',
+                        borderColor: dark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.2)',
+                        color: dark ? '#93c5fd' : '#3b82f6'
+                      }}
+                    >
+                      <Loader className="animate-spin h-4 w-4" /> Loading graph data...
                     </div>
                   )}
                 </motion.div>
@@ -333,14 +426,30 @@
     );
     
     /* ──────────────────────────────────────────────────────────────────────── */
-    const Section: React.FC<{ title: string; open: boolean; toggle: () => void; children: React.ReactNode }> = ({ title, open, toggle, children }) => {
-      const chevronVariants = { open: { rotate: 0 }, closed: { rotate: 180 } };
+    const Section: React.FC<{ 
+      title: string; 
+      open: boolean; 
+      toggle: () => void; 
+      children: React.ReactNode; 
+      dark: boolean;
+    }> = ({ title, open, toggle, children, dark }) => {
+      const chevronVariants = { open: { rotate: 0 }, closed: { rotate: -90 } };
       return (
-        <Collapsible open={open} onOpenChange={toggle} className="border-b border-neutral-800 pb-2">
-          <CollapsibleTrigger className="flex items-center justify-between w-full mb-1 select-none">
-            <h3 className="font-semibold text-sm">{title}</h3>
+        <Collapsible 
+          open={open} 
+          onOpenChange={toggle} 
+          className={cls(
+            "pb-3 border-b",
+            dark ? "border-neutral-800" : "border-neutral-200"
+          )}
+        >
+          <CollapsibleTrigger className="flex items-center justify-between w-full mb-2 select-none py-1">
+            <h3 className="font-semibold text-base">{title}</h3>
             <motion.div animate={open ? 'open' : 'closed'} variants={chevronVariants}>
-              <ChevronDown className="h-4 w-4 text-neutral-500" />
+              <ChevronDown className={cls(
+                "h-4 w-4 transition-colors",
+                dark ? "text-neutral-400" : "text-neutral-500"
+              )} />
             </motion.div>
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-3 pt-1">{children}</CollapsibleContent>
@@ -348,27 +457,56 @@
       );
     };
     
-    const SelectRow: React.FC<{ label: string; value: string; options: string[]; onChange: (v: string) => void }> = ({ label, value, options, onChange }) => (
-      <div className="space-y-1 text-xs">
-        <span className="font-medium">{label}</span>
+    const SelectRow: React.FC<{ 
+      label: string; 
+      value: string; 
+      options: string[]; 
+      onChange: (v: string) => void;
+      dark: boolean;
+    }> = ({ label, value, options, onChange, dark }) => (
+      <div className="space-y-1.5 text-sm">
+        {label !== "Query" && <span className="font-medium">{label}</span>}
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" className="w-full justify-between bg-neutral-800 border-neutral-700 h-7 px-2 text-xs">
+            <Button 
+              variant="outline" 
+              className={cls(
+                "w-full justify-between h-9 px-3 text-sm font-medium",
+                dark 
+                  ? "bg-neutral-800 border-neutral-700 hover:bg-neutral-700 hover:border-neutral-600" 
+                  : "bg-white border-neutral-200 hover:bg-neutral-100 hover:border-neutral-300"
+              )}
+            >
               {capitalize(value)}
-              <ChevronDown className="h-3 w-3 opacity-50" />
+              <ChevronDown className="h-3.5 w-3.5 ml-2 opacity-70" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-48 p-0 bg-neutral-800 border-neutral-700 rounded-md">
-            {options.map((opt) => (
-              <Button
-                key={opt}
-                variant="ghost"
-                className={cls('w-full justify-start text-xs rounded-none', opt === value && 'bg-neutral-700')}
-                onClick={() => onChange(opt)}
-              >
-                {opt === value && <Check className="h-3 w-3 mr-1" />} {capitalize(opt)}
-              </Button>
-            ))}
+          <PopoverContent 
+            className={cls(
+              "w-full p-1 rounded-lg shadow-lg",
+              dark 
+                ? "bg-neutral-800 border-neutral-700" 
+                : "bg-white border-neutral-200"
+            )}
+          >
+            <div className="max-h-60 overflow-auto py-1">
+              {options.map((opt) => (
+                <Button
+                  key={opt}
+                  variant="ghost"
+                  className={cls(
+                    "w-full justify-start text-sm rounded-md my-0.5 h-9",
+                    opt === value 
+                      ? (dark ? "bg-blue-600 text-white" : "bg-blue-600 text-white") 
+                      : (dark ? "hover:bg-neutral-700" : "hover:bg-neutral-100")
+                  )}
+                  onClick={() => onChange(opt)}
+                >
+                  {opt === value && <Check className="h-3.5 w-3.5 mr-2" />} 
+                  {capitalize(opt)}
+                </Button>
+              ))}
+            </div>
           </PopoverContent>
         </Popover>
       </div>
@@ -854,22 +992,68 @@
         transition={{ type: 'spring', stiffness: 300, damping: 35 }}
         className="absolute right-4 top-4 w-80 z-20"
       >
-        <Card className={cls('border', dark ? 'bg-neutral-900 border-neutral-700 text-neutral-100' : 'bg-white border-neutral-300')}>
-          <CardHeader>
+        <Card className={cls(
+          'border shadow-lg',
+          dark 
+            ? 'bg-neutral-900 border-neutral-700 text-neutral-100' 
+            : 'bg-white border-neutral-200 text-neutral-800'
+        )}>
+          <CardHeader className="pb-3">
             <CardTitle className="flex justify-between gap-2 text-lg">
-              {node.name ?? node.id}
-              <Button variant="ghost" size="icon" onClick={close} className="text-neutral-400 hover:text-neutral-100">
+              <span className={dark ? "text-neutral-100" : "text-neutral-800"}>
+                {node.name ?? node.id}
+              </span>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={close} 
+                className={cls(
+                  "h-7 w-7", 
+                  dark 
+                    ? "text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800" 
+                    : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100"
+                )}
+              >
                 <X className="h-4 w-4" />
               </Button>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 max-h-[80vh] overflow-y-auto text-sm">
-            <div className="text-xs text-neutral-400">{node.group ?? node.label}</div>
-            {node.description && <p>{node.description}</p>}
+            <div className={cls(
+              "text-xs py-1 px-2 rounded-md inline-block", 
+              dark 
+                ? "bg-neutral-800 text-neutral-300" 
+                : "bg-neutral-100 text-neutral-600"
+            )}>
+              {node.group ?? node.label ?? 'Node'}
+            </div>
+            
+            {node.description && (
+              <p className={dark ? "text-neutral-300" : "text-neutral-700"}>
+                {node.description}
+              </p>
+            )}
+            
             {node.properties && (
-              <div className="space-y-1 text-xs">
+              <div className="space-y-2 text-xs mt-3">
+                <div className={cls(
+                  "text-xs font-medium pb-1 border-b",
+                  dark ? "border-neutral-800 text-neutral-300" : "border-neutral-200 text-neutral-600"
+                )}>
+                  Properties
+                </div>
                 {Object.entries(node.properties).map(([k, v]) => (
-                  <div key={k} className="flex justify-between"><span className="text-neutral-400">{k}</span><span className="break-all">{String(v)}</span></div>
+                  <div key={k} className="flex justify-between items-center py-1">
+                    <span className={dark ? "text-neutral-400" : "text-neutral-500"}>
+                      {formatLabel(k)}
+                    </span>
+                    <span className={cls(
+                      "break-all max-w-[65%] text-right font-medium",
+                      dark ? "text-neutral-200" : "text-neutral-700"
+                    )}>
+                      {String(v)}
+                    </span>
+                  </div>
                 ))}
               </div>
             )}

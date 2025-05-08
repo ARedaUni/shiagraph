@@ -53,10 +53,8 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <Header />
           <main className="flex-1 w-full h-full">{children}</main>
-          <Footer />
-          <Toaster />
+        
         </ThemeProvider>
       </body>
     </html>
