@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import ChatMessage from "./chat-message";
 import { streamChat } from "@/lib/clients";
+import { queryLangChainGraph } from "@/lib/langchain-client";
 
 interface ChatProps {
   id: string;
@@ -16,9 +17,10 @@ interface ChatProps {
     nodeCount: number;
     nodeLabels?: string[];
   };
+  useLangChain?: boolean; // New prop to toggle LangChain usage
 }
 
-export function Chat({ id, onCypherQuery, graphMetadata }: ChatProps) {
+export function Chat({ id, onCypherQuery, graphMetadata, useLangChain = false }: ChatProps) {
   // Input state and handlers.
   const initialInput = "";
   const [inputContent, setInputContent] = useState<string>(initialInput);
@@ -79,24 +81,47 @@ export function Chat({ id, onCypherQuery, graphMetadata }: ChatProps) {
     [setMessages]
   );
 
-  // Append function
-  const appendAndTrigger = useCallback(
-    async (message: Message): Promise<void> => {
-      const inputContent: string = message.content;
-      await append(message);
+  // Process user input - Use either LangChain or original flow
+  const processInput = useCallback(
+    async (input: string) => {
+      if (useLangChain) {
+        // Use LangChain Graph API with streaming
+        await queryLangChainGraph({ 
+          question: input, 
+          setIsLoading, 
+          append, 
+          graphMetadata,
+          useStreaming: true // Enable streaming
+        });
+      } else {
+        // Use original stream chat API
+        await streamChat({ 
+          inputContent: input, 
+          setIsLoading, 
+          append, 
+          graphMetadata 
+        });
+      }
       
-      // Check if the message contains a Cypher query and pass it to parent if needed
-      if (onCypherQuery && inputContent.toLowerCase().includes('cypher:')) {
+      // Handle cypher query extraction if needed (for graph visualization)
+      if (onCypherQuery && input.toLowerCase().includes('cypher:')) {
         // Extract the Cypher query (assuming it comes after "cypher:")
-        const query = inputContent.substring(inputContent.toLowerCase().indexOf('cypher:') + 7).trim();
+        const query = input.substring(input.toLowerCase().indexOf('cypher:') + 7).trim();
         if (query) {
           onCypherQuery(query);
         }
       }
-      
-      await streamChat({ inputContent, setIsLoading, append, graphMetadata });
     },
-    [setIsLoading, append, onCypherQuery, graphMetadata]
+    [setIsLoading, append, onCypherQuery, graphMetadata, useLangChain]
+  );
+
+  // Append function
+  const appendAndTrigger = useCallback(
+    async (message: Message): Promise<void> => {
+      await append(message);
+      await processInput(message.content);
+    },
+    [append, processInput]
   );
 
   // handlers
@@ -116,21 +141,11 @@ export function Chat({ id, onCypherQuery, graphMetadata }: ChatProps) {
         role: "user",
       };
       append(newMessage);
-
-      // Check if the message contains a Cypher query and pass it to parent if needed
-      if (onCypherQuery && inputContent.toLowerCase().includes('cypher:')) {
-        // Extract the Cypher query (assuming it comes after "cypher:")
-        const query = inputContent.substring(inputContent.toLowerCase().indexOf('cypher:') + 7).trim();
-        if (query) {
-          onCypherQuery(query);
-        }
-      }
-
       setInputContent("");
 
-      await streamChat({ inputContent, setIsLoading, append, graphMetadata });
+      await processInput(inputContent);
     },
-    [inputContent, setInputContent, setIsLoading, append, onCypherQuery, graphMetadata]
+    [inputContent, setInputContent, append, processInput]
   );
 
   // handle form submission functionality
@@ -153,12 +168,7 @@ export function Chat({ id, onCypherQuery, graphMetadata }: ChatProps) {
           append(newMessage);
           
           // Process the follow-up question
-          streamChat({ 
-            inputContent: question, 
-            setIsLoading, 
-            append, 
-            graphMetadata 
-          });
+          processInput(question);
         }}
       />
 
