@@ -1,203 +1,187 @@
-**Planning Next.js application**
+# ShiaGraph - Knowledge Graph Visualization with AI
 
-The user is building a Next.js app with a Neo4j knowledge graph, and they want to display it with a beautiful, intuitive graph using d3.js. The side chat feature will interact with AI, generating Cypher queries to query Neo4j and display results. The app will be modular and configuration-friendly, avoiding classes for functions. I’ll help with references to d3.js documentation, AI SDK docs, and Google’s generative AI provider. Time to flesh out these docs and resources needed!
+## Overview
 
-**Planning the Next.js Application**
+ShiaGraph is an application for visualizing and interacting with a knowledge graph of a Discord server through natural language. The system combines graph visualization with AI-powered querying capabilities, allowing users to explore complex relationships through conversation.
 
-The user is asking for a detailed project plan for a Next.js app integrating a Neo4j graph with real-time chat and AI. I think I should answer directly in chat first, outlining the plan: project setup, needed packages, integration details, and key components like the d3.js-based graph visualizer and AI chat. I’ll also reference the AI SDK docs and Google’s generative AI provider. It’s probably better to first give a general plan here, then ask if they want to work on a more iterative document. No need for a document yet.
+## Architecture
 
-**Breaking down the implementation plan**
+### Core Components
 
-The user wants a phased plan for building their app, which includes setup, building the graph canvas and chat, integrating AI with Neo4j, and final testing and deployment. The plan will focus on modularity and configuration, avoiding classes. I'll emphasize design considerations since they want it beautiful and intuitive. I’ll include high-level examples of code where necessary. I'll also search for details about the AI SDK and the Gemini AI provider to help integrate that component. Time to get started!
+The application follows a modular architecture centered around Graph Retrieval-Augmented Generation (Graph RAG):
 
+1. **Frontend**
+   - Chat interface for natural language interaction
+   - Interactive graph visualization for displaying relationships
+   - Seamless updates as queries modify the displayed graph
 
-**Crafting the implementation plan**
+2. **Agent System**
+   - Query Builder Agent: Converts natural language to Cypher queries
+   - Graph Summarizer Agent: Analyzes graph data to provide human-readable insights
+   - Intent classifier to route requests appropriately
 
-I’m thinking of breaking down the plan by clearly outlining the tech stack, features, components, and data flow. I'll focus on AI integration, graph visualization, and real-time streaming architecture — all while ensuring modularity and ease of configuration as emphasized by the user. Design considerations will be key to making it beautiful and intuitive. I'll also add sections for security, error handling, and performance, followed by a phased development roadmap. Citations will back up statements, and future enhancements can be noted. Let’s get this detailed!
+3. **Graph RAG Implementation**
+   - Extracts relevant subgraphs based on user questions
+   - Uses subgraphs as context for AI responses
+   - Generates accurate, graph-informed answers
 
+4. **Backend Services**
+   ```
+   /services
+     /agents
+       - queryBuilder.ts (Converts natural language to Cypher)
+       - graphSummarizer.ts (Analyzes graph data for insights)
+       - intentClassifier.ts (Determines query intent)
+     /graph
+       - client.ts (Neo4j connection and query execution)
+       - retriever.ts (Extracts relevant subgraphs)
+       - graphRAG.ts (Integrates agents and retrieval)
+     /ai
+       - llmClient.ts (Abstraction over Gemini/other models)
+   ```
 
-Thought for 40 seconds
+5. **API Structure**
+   ```
+   /api
+     /chat
+       /stream - Main chat endpoint
+     /graph
+       /query - Execute Cypher directly
+       /rag - Extract subgraph and return with summary
+   ```
 
+## User Flow
 
-Below is a practical, end‑to‑end plan for your **Next‑.js (app router, TypeScript) Neo4j graph‑chat application**.
-Everything is expressed in functional, modular React; no classes.
+1. User asks a question (e.g., "Who is from Canada?")
+2. The system determines if the question relates to graph data
+3. For graph-related questions:
+   - Query Builder converts the question to a Cypher query
+   - Graph Retriever executes the query against Neo4j
+   - Summarizer enriches the response with insights from the graph
+   - The UI updates to display both the text response and visualization
+4. For general questions:
+   - The regular LLM handles the response
 
----
+## Extensibility
 
-## 1 · Project scaffold
+This architecture supports future extensions like:
+- Multiple knowledge sources
+- Different reasoning agents
+- Advanced visualization modes
+- User-defined graph queries
+- Custom graph algorithms
 
-| Task            | Notes                                                                                                                                   |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| **Create repo** | `npx create-next-app@latest neo4j‑graph‑chat --ts --eslint --tailwind`                                                                  |
-| **Packages**    | `npm i neo4j-driver d3 @ai-sdk/core @ai-sdk/google @ai-sdk/reactstream zustand`<br>Dev / lint: `@types/d3`, `eslint-plugin-tailwindcss` |
-| **Env vars**    | `NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, GOOGLE_AI_API_KEY` in `.env.local`                                                              |
+## Implementation Progress
 
----
+### Completed Components
 
-## 2 · High‑level architecture
+- ✅ Service directory structure created
+- ✅ Neo4j client service implemented (services/graph/client.ts)
+- ✅ Graph retriever service implemented (services/graph/retriever.ts)
+- ✅ LLM client abstraction created (services/ai/llmClient.ts)
+- ✅ Query Builder agent implemented (services/agents/queryBuilder.ts)
+- ✅ Graph Summarizer agent implemented (services/agents/graphSummarizer.ts)
+- ✅ Intent Classifier implemented (services/agents/intentClassifier.ts)
+- ✅ GraphRAG service implemented (services/graph/graphRAG.ts)
 
-```
-┌───────────────────────┐
-│  ChatPanel (client)   │───╮
-└───────────────────────┘   │   SSE/WS
-                            v
-┌───────────────────────┐  HTTPS   ┌──────────────────────────────┐
-│  /api/ai‑cypher (edge)│────────▶│  Google Gemini via AI‑SDK     │
-└───────────────────────┘          └──────────────────────────────┘
-        ▲                                 │
-        │ Cypher                          │
-        │                                 ▼
-┌───────────────────────┐          ┌──────────────────────────────┐
-│ GraphCanvas (client)  │◀─────────│  /api/neo4j‑query (server)   │
-└───────────────────────┘   JSON    └──────────────────────────────┘
-```
+### In Progress
 
-* **Edge route `/api/ai‑cypher`** streams a Gemini response that ends in a Cypher query.
-  `const model = google('gemini-1.5-pro-latest');` ([AI SDK][1])
-* **Server route `/api/neo4j‑query`** executes Cypher with `neo4j-driver`, then maps Neo4j records into the `{ nodes[], links[] }` structure D3 expects. ([Graph Database & Analytics][2])
-* **GraphCanvas** draws a force‑directed graph with D3 inside an SVG; data lives in a **Zustand** store so ChatPanel and Canvas stay in sync.
+- 🔄 API layer refactoring
 
----
+### Pending
 
-## 3 · Core React modules
+- Frontend integration
+- Testing and optimization
 
-| File                             | Responsibility                                                                                            |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `hooks/useGeminiStream.ts`       | Wraps AI SDK streaming (`model.stream(...)`) and exposes partial tokens + complete Cypher string.         |
-| `hooks/useNeo4j.ts`              | Lazily instantiates a Neo4j driver, provides `runQuery(cypher, params)`.                                  |
-| `store/graph.ts`                 | Zustand store `{ nodes, links, addGraph }`.                                                               |
-| `components/ChatPanel.tsx`       | Textarea + messages; on submit → call `useGeminiStream`, display stream, then trigger `/api/neo4j‑query`. |
-| `components/GraphCanvas.tsx`     | Functional component with D3 force‑simulation; subscribes to graph store and updates via `useEffect`.     |
-| `components/ResizableLayout.tsx` | CSS‑grid or `framer‑motion` split‑pane between chat and canvas.                                           |
+## Implementation Roadmap
 
-All components are **pure functions**, accept props for easy theming/config.
+### Phase 1: Service Layer Setup ✅
 
----
+1. **Create Service Directory Structure** ✅
+   ```bash
+   mkdir -p services/agents services/graph services/ai
+   ```
 
-## 4 · AI prompt strategy (server‑side)
+2. **Setup Neo4j Client** ✅
+   - Create `services/graph/client.ts` for Neo4j connection management
+   - Implement connection pooling and query execution functions
+   - Add environment variables for Neo4j credentials
 
-```ts
-const SYSTEM_PROMPT = `
-You are an assistant that writes Neo4j Cypher for a database whose schema is:
-(:Person {name, role})-[:REPORTS_TO]->(:Person)
-(:Project {title})<-[:WORKS_ON]-(:Person)
+3. **Create LLM Client Abstraction** ✅
+   - Implement `services/ai/llmClient.ts` to abstract Google Gemini API
+   - Add configuration for different models/providers
+   - Include streaming response functionality
 
-Output ONLY Cypher that returns nodes and rels needed for the request.
-`;
-```
+### Phase 2: Agent Implementation ✅
 
-* Use **Gemini tool‑calling** JSON schema (AI SDK supports this out of the box).
-* When stream ends, parse the `content` block containing the query.
-* Validate with a lightweight Cypher parser or parameterised whitelist to avoid harmful queries.
+1. **Implement Query Builder Agent** ✅
+   - Create `services/agents/queryBuilder.ts`
+   - Define system prompts for Cypher generation
+   - Add validation of generated Cypher queries
+   - Include error handling for malformed queries
 
----
+2. **Implement Graph Summarizer Agent** ✅
+   - Create `services/agents/graphSummarizer.ts`
+   - Build prompt templates that incorporate graph structure
+   - Implement result formatting and content extraction
 
-## 5 · Neo4j API route
+3. **Create Intent Classifier** ✅
+   - Implement simple heuristics or ML-based classifier
+   - Determine if a query is graph-related or general
 
-```ts
-import neo4j from 'neo4j-driver';
-import { NextRequest, NextResponse } from 'next/server';
+### Phase 3: Graph RAG Integration ✅
 
-const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
+1. **Build Graph Retriever** ✅
+   - Create `services/graph/retriever.ts`
+   - Implement subgraph extraction based on query context
+   - Add functions to convert Neo4j results to structured data
 
-export async function POST(req: NextRequest) {
-  const { cypher, params } = await req.json();
-  const session = driver.session();
-  const result = await session.run(cypher, params);
-  const nodes: any[] = [], links: any[] = [];
-  result.records.forEach(rec => {
-    rec.forEach(value => {
-      if (neo4j.isInt(value.identity)) {
-        // node
-        nodes.push({ id: value.identity.toInt(), label: value.labels[0], ...value.properties });
-      } else {
-        // relationship
-        links.push({ source: value.start.toInt(), target: value.end.toInt(), type: value.type });
-      }
-    });
-  });
-  await session.close();
-  return NextResponse.json({ nodes, links });
-}
-```
+2. **Create RAG Pipeline** ✅
+   - Combine agents, retriever, and LLM in a coherent pipeline
+   - Implement proper context windows and prompt engineering
+   - Create `services/graph/graphRAG.ts` to integrate all components
 
----
+### Phase 4: API Layer Refactoring
 
-## 6 · GraphCanvas essentials (D3)
+1. **Refactor Chat API**
+   - Update `app/api/chat/stream/route.ts` to use the new service layer
+   - Implement proper streaming of combined results
+   - Add error handling and fallback strategies
 
-```ts
-export function GraphCanvas({ width = 800, height = 600 }) {
-  const { nodes, links } = useGraphStore();
-  const svgRef = useRef<SVGSVGElement>(null);
+2. **Implement Graph API Endpoints**
+   - Create `/api/graph/query` for direct Cypher execution
+   - Implement `/api/graph/rag` for the complete RAG pipeline
+   - Add appropriate authentication and rate limiting
 
-  useEffect(() => {
-    const svg = d3.select(svgRef.current);
-    const sim = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(links).id((d: any) => d.id).distance(120))
-      .force('charge', d3.forceManyBody().strength(-300))
-      .force('center', d3.forceCenter(width / 2, height / 2));
+### Phase 5: Frontend Integration
 
-    // draw nodes & links...
-    return () => sim.stop();
-  }, [nodes, links, width, height]);
+1. **Update Chat Component**
+   - Modify `components/chat.tsx` to handle graph-specific responses
+   - Add UI indicators for when graph queries are being processed
 
-  return <svg ref={svgRef} className="w-full h-full bg-neutral-50 rounded-2xl shadow" />;
-}
-```
+2. **Enhance Graph Visualization**
+   - Update integration between chat responses and graph updates
+   - Add animations for graph transitions
+   - Implement highlighting of relevant nodes/edges
 
-Styling via **Tailwind**; motion‑blur glow and subtle link arrows give the “extremely beautiful” vibe.
+### Phase 6: Testing and Optimization
 
----
+1. **Unit and Integration Tests**
+   - Write tests for individual agents and the RAG pipeline
+   - Create end-to-end tests for the complete user flow
 
-## 7 · Streaming UX
+2. **Performance Optimization**
+   - Profile and optimize Neo4j queries
+   - Implement caching layers for repeated queries
+   - Add loading indicators and progressive rendering
 
-* AI response streams token‑by‑token to ChatPanel via **Server‑sent events (SSE)** or **Next.js experimental streaming** (`@ai-sdk/reactstream`).
-* Once `"```cypher"` fence closes, ChatPanel POSTs to `/api/neo4j‑query`.
-* While query runs, show a skeleton overlay on GraphCanvas; then animate node fade‑in with **Framer‑Motion**.
+## Getting Started
 
-Gemini’s Live API supports continuous streaming and multi‑modal contexts ([Google AI for Developers][3]), which you can later extend to voice chat.
+(Development and deployment instructions to be added)
 
----
+## Technologies
 
-## 8 · Security & resilience
-
-* Parameter‑ise all user inputs when hitting Neo4j; disallow destructive keywords (`CREATE`, `DELETE`, etc.) server‑side.
-* Rate‑limit chat endpoint; cache identical queries.
-* If Gemini returns invalid Cypher, send a structured error back to ChatPanel and let the model self‑correct with a follow‑up prompt.
-
----
-
-## 9 · Styling & theming
-
-* Global dark/light theme via `tailwind.config.js` with CSS variables.
-* Use a 12‑column CSS grid and glass‑morphism card for ChatPanel.
-* Hover tooltips (`@tippyjs/react`) on nodes show properties.
-
----
-
-## 10 · Development roadmap (suggested timeline)
-
-| Week | Milestone                                                   |
-| ---- | ----------------------------------------------------------- |
-| 1    | Repo bootstrap; env setup; basic Neo4j driver test          |
-| 2    | GraphCanvas MVP (static sample data)                        |
-| 3    | ChatPanel UI with dummy streaming                           |
-| 4    | Integrate AI SDK → generate Cypher; build `/api/ai‑cypher`  |
-| 5    | Connect to Neo4j; render real data; error handling          |
-| 6    | Polish visuals, framer‑motion, theming                      |
-| 7    | E2E tests with Playwright; CI/CD to Vercel                  |
-| 8    | Stretch: live collaboration, voice chat (Gemini Live), auth |
-
----
-
-### Next steps
-
-1. **Spin up the skeleton repo** and test a hard‑coded Cypher displayed in GraphCanvas.
-2. **Add AI streaming** with your Google key and verify latency & cost.
-3. Consider isolating the graph adaptor (Neo4j → D3 format) so you can swap in a different database later.
-
-Ping me when you hit the next milestone—happy to refine the code or troubleshoot!
-
-[1]: https://sdk.vercel.ai/providers/ai-sdk-providers/google-generative-ai?utm_source=chatgpt.com "Google Generative AI Provider - AI SDK"
-[2]: https://neo4j.com/docs/getting-started/graph-visualization/graph-visualization-tools/?utm_source=chatgpt.com "Graph visualization tools - Getting Started - Neo4j"
-[3]: https://ai.google.dev/gemini-api/docs/live?utm_source=chatgpt.com "Live API | Gemini API | Google AI for Developers"
+- Next.js
+- Neo4j
+- Google Generative AI (Gemini)
+- D3.js for graph visualization

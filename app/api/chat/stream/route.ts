@@ -128,29 +128,29 @@ export async function POST(req: Request) {
         
         // After streaming the content to the client, check for Cypher query
         const cypherMatch = fullResponse.match(/```CYPHER:([^`]+)```/);
-        if (cypherMatch && cypherMatch[1]) {
-          const cypherQuery = cypherMatch[1].trim();
+        // if (cypherMatch && cypherMatch[1]) {
+        //   const cypherQuery = cypherMatch[1].trim();
           
-          // Call the graph API with the generated Cypher query
-          try {
-            const graphResponse = await fetch(new URL('/api/graph', req.url), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ cypher: cypherQuery }),
-            });
+        //   // Call the graph API with the generated Cypher query
+        //   try {
+        //     const graphResponse = await fetch(new URL('/api/graph', req.url), {
+        //       method: 'POST',
+        //       headers: { 'Content-Type': 'application/json' },
+        //       body: JSON.stringify({ cypher: cypherQuery }),
+        //     });
             
-            // If successful, send a special "graph_update" event
-            if (graphResponse.ok) {
-              const graphData = await graphResponse.json();
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                type: 'graph_update',
-                data: graphData
-              })}\n\n`));
-            }
-          } catch (error) {
-            console.error('Error calling graph API:', error);
-          }
-        }
+        //     // If successful, send a special "graph_update" event
+        //     if (graphResponse.ok) {
+        //       const graphData = await graphResponse.json();
+        //       controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+        //         type: 'graph_update',
+        //         data: graphData
+        //       })}\n\n`));
+        //     }
+        //   } catch (error) {
+        //     console.error('Error calling graph API:', error);
+        //   }
+        // }
         
         controller.close();
       },
