@@ -3,11 +3,45 @@
 import { Chat } from "@/components/chat";
 import ImprovedGraph from "@/components/graph/improvedgraph";
 import { generateUUID } from "@/lib/utils";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 
 export default function Home() {
   const id = generateUUID();
   const [graph, setGraph] = useState({ nodes: [], links: [] });
+  
+  // Extract unique relationship types for better query generation
+  const uniqueRelationshipTypes = useMemo(() => {
+    const types = graph.links.map((link) => link.type);
+    return [...new Set(types)].filter(Boolean);
+  }, [graph.links]);
+  
+  // Extract unique node labels
+  const uniqueNodeLabels = useMemo(() => {
+    // Handle different node structures safely
+    const labels = graph.nodes
+      .map((node) => {
+        // Check if node has a labels property that is an array
+        if (node.labels && Array.isArray(node.labels)) {
+          return node.labels;
+        }
+        // Check if node has a label property
+        if (node.label) {
+          return [node.label];
+        }
+        // If node has neither, try to extract type information from other properties
+        if (node.type) {
+          return [node.type];
+        }
+        return [];
+      })
+      .flat();
+    return [...new Set(labels)].filter(Boolean);
+  }, [graph.nodes]);
+  
+  // Log unique relationship types and node labels 
+  console.log("Available relationship types:", uniqueRelationshipTypes);
+  console.log("Available node labels:", uniqueNodeLabels);
+  
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [numberOfNodes, setNumberOfNodes] = useState<number>(100);
@@ -63,7 +97,15 @@ export default function Home() {
         />
       </div>
       <div className="border-l border-border overflow-hidden">
-        <Chat id={id} onCypherQuery={updateCypherQuery} />
+        <Chat 
+          id={id} 
+          onCypherQuery={updateCypherQuery} 
+          graphMetadata={{
+            relationshipTypes: uniqueRelationshipTypes,
+            nodeCount: graph.nodes.length,
+            nodeLabels: uniqueNodeLabels
+          }} 
+        />
       </div>
     </div>
   );

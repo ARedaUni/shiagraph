@@ -79,68 +79,170 @@ export class Neo4jClient {
   public transformToGraph(result: QueryResult): { nodes: any[], links: any[] } {
     // First, create all nodes
     const nodesMap: Record<string, any> = {};
+    const links: any[] = [];
     
-    // Extract all nodes from records
-    for (const record of result.records) {
-      const nodeEntities = ['n', 'm']; // node keys to extract
+    console.log('Transforming Neo4j results:', {
+      recordCount: result.records.length,
+      keys: result.records.length > 0 ? result.records[0].keys : []
+    });
+    
+    // Handle scalar property results (u.name, etc.)
+    const hasOnlyScalarResults = result.records.length > 0 && 
+      result.records[0].keys.every(key => String(key).includes('.'));
       
-      for (const key of nodeEntities) {
-        const node = record.get(key);
-        if (!node || !node.identity) continue;
+    if (hasOnlyScalarResults && result.records.length > 0) {
+      console.log('Detected scalar property results - creating visualization nodes');
+      
+      // Group by entity prefix (e.g., 'u' from 'u.name')
+      const entityGroups: Record<string, Record<string, any>> = {};
+      
+      // Process all records
+      for (let i = 0; i < result.records.length; i++) {
+        const record = result.records[i];
         
-        const nodeId = node.identity.toString();
+        // Each record represents an entity
+        const nodeId = `result_${i}`;
+        const properties: Record<string, any> = {};
         
-        if (!nodesMap[nodeId]) {
-          // Extract properties and ensure they're properly formatted
-          const name = node.properties?.name || node.properties?.title || nodeId;
-          const description = node.properties?.description || node.properties?.summary || '';
+        // Extract all properties from this record
+        for (const key of record.keys) {
+          const keyStr = String(key);
+          const value = record.get(key);
           
-          // Determine group/label from first label
-          const primaryLabel = node.labels && node.labels.length > 0 ? node.labels[0] : 'Unknown';
+          // Skip null values
+          if (value === null || value === undefined) continue;
           
+          // Extract entity prefix and property name
+          const [entityPrefix, propName] = keyStr.split('.');
+          
+          // Initialize entity group if needed
+          if (!entityGroups[entityPrefix]) {
+            entityGroups[entityPrefix] = {};
+          }
+          
+          // Add this property to the entity
+          properties[propName || keyStr] = value;
+          
+          // Store in entity group
+          entityGroups[entityPrefix][propName || keyStr] = value;
+        }
+        
+        // Create a node for this record
+        if (Object.keys(properties).length > 0) {
+          // Use a name property if available, otherwise first property value
+          const propKeys = Object.keys(properties);
+          const name = properties.name || properties.title || 
+            (propKeys.length > 0 ? `${propKeys[0]}: ${properties[propKeys[0]]}` : nodeId);
+            
           nodesMap[nodeId] = {
             id: nodeId,
             name: name,
-            group: primaryLabel,
-            label: primaryLabel,
-            description: description,
-            properties: node.properties || {},
-            labels: node.labels || [],
-            // D3 will add these x, y, etc. properties during simulation
+            group: 'Result', 
+            label: 'Result',
+            properties: properties,
+            labels: ['Result'],
           };
+        }
+      }
+      
+      // Create relationships between related entities if possible
+      const nodeIds = Object.keys(nodesMap);
+      for (let i = 0; i < nodeIds.length; i++) {
+        for (let j = i + 1; j < nodeIds.length; j++) {
+          // Simple relationship for visualization
+          links.push({
+            id: `link_${i}_${j}`,
+            source: nodeIds[i],
+            target: nodeIds[j],
+            type: 'RELATED',
+            value: 1
+          });
+        }
+      }
+    } else {
+      // Process regular node/relationship records
+      // Process all records
+      for (const record of result.records) {
+        // Process all fields in each record
+        for (const key of record.keys) {
+          const item = record.get(key);
+          
+          // Skip null or undefined items
+          if (!item) continue;
+          
+          console.log(`Processing item with key "${String(key)}":`, {
+            hasIdentity: item.identity !== undefined,
+            hasLabels: !!item.labels,
+            hasLabel: !!item.label,
+            isRelationship: item.identity !== undefined && item.start !== undefined && 
+                          item.end !== undefined && item.type !== undefined
+          });
+          
+          // Process as a node if it has identity and labels properties
+          if (item.identity !== undefined && (item.labels || item.label)) {
+            const nodeId = item.identity.toString();
+            
+            if (!nodesMap[nodeId]) {
+              // Extract properties and ensure they're properly formatted
+              const name = item.properties?.name || item.properties?.title || nodeId;
+              const description = item.properties?.description || item.properties?.summary || '';
+              
+              // Determine group/label from first label
+              const primaryLabel = item.labels && item.labels.length > 0 ? item.labels[0] : 
+                                 (item.label ? item.label : 'Unknown');
+              
+              nodesMap[nodeId] = {
+                id: nodeId,
+                name: name,
+                group: primaryLabel,
+                label: primaryLabel,
+                description: description,
+                properties: item.properties || {},
+                labels: item.labels || [item.label].filter(Boolean),
+                // D3 will add these x, y, etc. properties during simulation
+              };
+              
+              console.log(`Added node ${nodeId} with label ${primaryLabel}`);
+            }
+          }
+          
+          // Process as a relationship if it has identity, start, end, and type properties
+          if (item.identity !== undefined && item.start !== undefined && 
+              item.end !== undefined && item.type !== undefined) {
+            
+            const sourceId = typeof item.start === 'number' ? item.start.toString() : item.start;
+            const targetId = typeof item.end === 'number' ? item.end.toString() : item.end;
+            
+            // Store relationship for later processing (after all nodes are processed)
+            links.push({
+              id: item.identity.toString(),
+              source: sourceId,
+              target: targetId,
+              type: item.type || 'RELATED',
+              value: item.properties?.weight || item.properties?.value || 1,
+              ...item.properties,
+            });
+            
+            console.log(`Added relationship ${item.type} from ${sourceId} to ${targetId}`);
+          }
         }
       }
     }
     
-    // Now extract relationships as links
-    const links: any[] = [];
+    // Filter links to only include those with valid source and target nodes
+    const validLinks = links.filter(link => 
+      nodesMap[link.source] && nodesMap[link.target]
+    );
     
-    for (const record of result.records) {
-      const r = record.get('r');
-      if (!r || !r.identity) continue;
-      
-      const sourceId = typeof r.start === 'number' ? r.start.toString() : r.start;
-      const targetId = typeof r.end === 'number' ? r.end.toString() : r.end;
-      
-      // Skip if source or target nodes weren't found
-      if (!nodesMap[sourceId] || !nodesMap[targetId]) continue;
-      
-      // Get relationship value from properties if available
-      const value = r.properties?.weight || r.properties?.value || 1;
-      
-      links.push({
-        id: r.identity.toString(),
-        source: sourceId, // Using ID as string (ImprovedGraph accepts string IDs)
-        target: targetId, // Using ID as string (ImprovedGraph accepts string IDs)
-        type: r.type || 'RELATED',
-        value: value,
-        ...r.properties,
-      });
-    }
+    console.log('Transformation complete:', {
+      totalNodes: Object.keys(nodesMap).length,
+      totalLinks: links.length,
+      validLinks: validLinks.length
+    });
     
     return {
       nodes: Object.values(nodesMap),
-      links,
+      links: validLinks,
     };
   }
 

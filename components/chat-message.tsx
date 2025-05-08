@@ -10,13 +10,15 @@ import { AILogo, UserIcon } from "./ui/icons";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
 import { CheckIcon, CopyIcon } from "lucide-react";
+import { ArrowRightIcon } from "lucide-react";
 
 interface ChatMessageProps {
   messages: Message[] | undefined;
   isLoading: boolean;
+  onFollowUpClick?: (question: string) => void;
 }
 
-export default function ChatMessage({ messages, isLoading }: ChatMessageProps) {
+export default function ChatMessage({ messages, isLoading, onFollowUpClick }: ChatMessageProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollToBottom = () => {
@@ -44,6 +46,71 @@ export default function ChatMessage({ messages, isLoading }: ChatMessageProps) {
     setTimeout(() => {
       setCopiedMessageId(null);
     }, 1500);
+  };
+
+  // Function to handle follow-up question clicks
+  const handleFollowUpClick = (question: string) => {
+    if (onFollowUpClick) {
+      onFollowUpClick(question);
+    }
+  };
+
+  // Helper to render follow-up questions
+  const renderMessage = (content: string) => {
+    // Check for follow-up questions with the special marker
+    const parts = content.split(/(\{\{follow_up_question:.*?\}\})/);
+    
+    if (parts.length > 1) {
+      return parts.map((part, i) => {
+        // Check if this part is a follow-up question
+        const match = part.match(/\{\{follow_up_question:(.*?)\}\}/);
+        
+        if (match) {
+          const question = match[1];
+          return (
+            <div key={i} className="mt-4 mb-2 w-full">
+              <div 
+                onClick={() => handleFollowUpClick(question)}
+                className="w-full p-3 bg-white dark:bg-gray-800 rounded-md shadow-sm overflow-hidden cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors group flex items-center justify-between"
+              >
+                <span className="text-sm font-medium">{question}</span>
+                <ArrowRightIcon className="w-4 h-4 opacity-50 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </div>
+          );
+        }
+        
+        // For regular content, parse markdown
+        return part ? (
+          <span
+            key={i}
+            dangerouslySetInnerHTML={{
+              __html: marked.parse(part),
+            }}
+          />
+        ) : null;
+      });
+    }
+    
+    // For messages without follow-up questions, process code blocks
+    return content.split("```").map((part, index) => {
+      if (index % 2 === 0) {
+        return (
+          <span
+            key={index}
+            dangerouslySetInnerHTML={{
+              __html: marked.parse(part),
+            }}
+          />
+        );
+      } else {
+        return (
+          <pre className="whitespace-pre-wrap text-xs" key={index}>
+            <CodeDisplayBlock code={part} lang="" />
+          </pre>
+        );
+      }
+    });
   };
 
   return (
@@ -88,25 +155,8 @@ export default function ChatMessage({ messages, isLoading }: ChatMessageProps) {
                   </Avatar>
 
                   <span className="p-2 rounded-md max-w-xs overflow-x-auto text-sm">
-                    {/* Check if the message content contains a code block */}
-                    {message.content.split("```").map((part, index) => {
-                      if (index % 2 === 0) {
-                        return (
-                          <span
-                            key={index}
-                            dangerouslySetInnerHTML={{
-                              __html: marked.parse(part),
-                            }}
-                          />
-                        );
-                      } else {
-                        return (
-                          <pre className="whitespace-pre-wrap text-xs" key={index}>
-                            <CodeDisplayBlock code={part} lang="" />
-                          </pre>
-                        );
-                      }
-                    })}
+                    {/* Render message content with follow-up handling */}
+                    {renderMessage(message.content)}
 
                     {isLoading &&
                       messages.indexOf(message) === messages.length - 1 && (
@@ -140,12 +190,51 @@ export default function ChatMessage({ messages, isLoading }: ChatMessageProps) {
         ))}
         {isLoading && (
           <div className="flex pl-3 pb-3 gap-2 items-center">
-            <div className="bg-accent p-2 rounded-md max-w-xs overflow-x-auto">
-              <div className="flex gap-1">
-                <span className="size-1.5 rounded-full bg-slate-700 motion-safe:animate-[bounce_1s_ease-in-out_infinite] dark:bg-slate-300"></span>
-                <span className="size-1.5 rounded-full bg-slate-700 motion-safe:animate-[bounce_0.5s_ease-in-out_infinite] dark:bg-slate-300"></span>
-                <span className="size-1.5 rounded-full bg-slate-700 motion-safe:animate-[bounce_1s_ease-in-out_infinite] dark:bg-slate-300"></span>
+            <Avatar className="flex justify-center items-center overflow-hidden w-8 h-8 rounded-full bg-gray-700">
+              <AILogo
+                className="object-contain"
+                width={24}
+                height={24}
+              />
+            </Avatar>
+            <div className="p-2 rounded-md overflow-hidden relative">
+              <div className="px-4 py-2 bg-white dark:bg-gray-800 rounded-md shadow-sm overflow-hidden">
+                <div className="loading-border"></div>
+                <span className="text-sm font-medium">Querying graph</span>
               </div>
+              <style jsx>{`
+                .loading-border {
+                  position: absolute;
+                  top: 0;
+                  left: 0;
+                  right: 0;
+                  bottom: 0;
+                  border-radius: 0.375rem;
+                  border: 2px solid transparent;
+                  background: linear-gradient(white, white) padding-box,
+                              linear-gradient(90deg, #4F46E5, #A855F7, #4F46E5) border-box;
+                  background-size: 200% 100%;
+                  animation: border-spin 2s linear infinite;
+                  pointer-events: none;
+                  z-index: -1;
+                }
+                
+                @keyframes border-spin {
+                  0% {
+                    background-position: 0% 0%;
+                  }
+                  100% {
+                    background-position: 200% 0%;
+                  }
+                }
+                
+                @media (prefers-color-scheme: dark) {
+                  .loading-border {
+                    background: linear-gradient(#1f2937, #1f2937) padding-box,
+                                linear-gradient(90deg, #4F46E5, #A855F7, #4F46E5) border-box;
+                  }
+                }
+              `}</style>
             </div>
           </div>
         )}

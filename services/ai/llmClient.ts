@@ -79,13 +79,25 @@ export class LLMClient {
    */
   public async generateText(messages: Message[], temperature: number = 0.3): Promise<string> {
     try {
-      const completion = await this.provider.complete({
+      const result = await streamText({
+        model: this.provider,
         messages,
         temperature,
         maxTokens: 2048,
+        providerOptions: {
+          google: {
+            responseModalities: ['TEXT'],
+          }
+        }
       });
 
-      return completion.text;
+      let fullResponse = '';
+      
+      for await (const chunk of result.textStream) {
+        fullResponse += chunk;
+      }
+      
+      return fullResponse;
     } catch (error) {
       console.error('Error generating text:', error);
       throw error;

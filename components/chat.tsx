@@ -11,9 +11,14 @@ import { streamChat } from "@/lib/clients";
 interface ChatProps {
   id: string;
   onCypherQuery?: (query: string) => void;
+  graphMetadata?: {
+    relationshipTypes: string[];
+    nodeCount: number;
+    nodeLabels?: string[];
+  };
 }
 
-export function Chat({ id, onCypherQuery }: ChatProps) {
+export function Chat({ id, onCypherQuery, graphMetadata }: ChatProps) {
   // Input state and handlers.
   const initialInput = "";
   const [inputContent, setInputContent] = useState<string>(initialInput);
@@ -89,9 +94,9 @@ export function Chat({ id, onCypherQuery }: ChatProps) {
         }
       }
       
-      await streamChat({ inputContent, setIsLoading, append });
+      await streamChat({ inputContent, setIsLoading, append, graphMetadata });
     },
-    [setIsLoading, append, onCypherQuery]
+    [setIsLoading, append, onCypherQuery, graphMetadata]
   );
 
   // handlers
@@ -123,9 +128,9 @@ export function Chat({ id, onCypherQuery }: ChatProps) {
 
       setInputContent("");
 
-      await streamChat({ inputContent, setIsLoading, append });
+      await streamChat({ inputContent, setIsLoading, append, graphMetadata });
     },
-    [inputContent, setInputContent, setIsLoading, append, onCypherQuery]
+    [inputContent, setInputContent, setIsLoading, append, onCypherQuery, graphMetadata]
   );
 
   // handle form submission functionality
@@ -135,7 +140,27 @@ export function Chat({ id, onCypherQuery }: ChatProps) {
 
   return (
     <div className="flex flex-col w-full h-full relative">
-      <ChatMessage isLoading={isLoading} messages={messages} />
+      <ChatMessage 
+        isLoading={isLoading} 
+        messages={messages} 
+        onFollowUpClick={(question) => {
+          // Create a new message for the follow-up question
+          const newMessage: Message = {
+            id: generateUUID(),
+            content: question,
+            role: "user",
+          };
+          append(newMessage);
+          
+          // Process the follow-up question
+          streamChat({ 
+            inputContent: question, 
+            setIsLoading, 
+            append, 
+            graphMetadata 
+          });
+        }}
+      />
 
       <ChatInput
         chatId={id}

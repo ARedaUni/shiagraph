@@ -14,9 +14,11 @@ The application follows a modular architecture centered around Graph Retrieval-A
    - Chat interface for natural language interaction
    - Interactive graph visualization for displaying relationships
    - Seamless updates as queries modify the displayed graph
+   - Follow-up questions displayed as actionable buttons
 
 2. **Agent System**
    - Query Builder Agent: Converts natural language to Cypher queries
+     - Uses pipe operators for both node labels and relationship types to create comprehensive queries
    - Graph Summarizer Agent: Analyzes graph data to provide human-readable insights
    - Intent classifier to route requests appropriately
 
@@ -24,6 +26,7 @@ The application follows a modular architecture centered around Graph Retrieval-A
    - Extracts relevant subgraphs based on user questions
    - Uses subgraphs as context for AI responses
    - Generates accurate, graph-informed answers
+   - Passes graph schema metadata to LLM for improved query generation
 
 4. **Backend Services**
    ```
@@ -80,18 +83,30 @@ This architecture supports future extensions like:
 - ✅ Graph retriever service implemented (services/graph/retriever.ts)
 - ✅ LLM client abstraction created (services/ai/llmClient.ts)
 - ✅ Query Builder agent implemented (services/agents/queryBuilder.ts)
+  - ✅ Enhanced to use pipe operators for both node labels and relationship types for more comprehensive queries
 - ✅ Graph Summarizer agent implemented (services/agents/graphSummarizer.ts)
 - ✅ Intent Classifier implemented (services/agents/intentClassifier.ts)
 - ✅ GraphRAG service implemented (services/graph/graphRAG.ts)
+- ✅ Graph metadata passing implemented (relationship types for better Cypher queries)
+- ✅ Node label awareness added to Query Builder
+- ✅ API layer refactoring
+- ✅ Frontend integration with graph visualization
+- ✅ Interactive follow-up questions
+- ✅ Natural language formatting of graph responses
 
 ### In Progress
 
-- 🔄 API layer refactoring
+- 🔄 Improved response formatting directly from GraphRAG service
+- 🔄 Performance optimizations for larger graphs
+- 🔄 LangChain integration with GraphCypherQAChain for more robust graph question answering
 
-### Pending
+### Recent Improvements
 
-- Frontend integration
-- Testing and optimization
+- **Natural Language Responses**: Enhanced the response quality to present graph data in a conversational format.
+- **Interactive Follow-up Questions**: Added clickable follow-up questions that appear as buttons for seamless conversation flow.
+- **Improved Formatting**: Better handling of graph responses that prevents formatting artifacts like bullet points and makes responses more conversational.
+- **GraphRAG Pipeline**: Streamlined the response generation pipeline to provide more consistent and coherent answers.
+- **Planned LangChain Integration**: Evaluating LangChain's GraphCypherQAChain to improve graph query generation and response quality while maintaining custom features like follow-up questions and streaming.
 
 ## Implementation Roadmap
 
@@ -119,6 +134,7 @@ This architecture supports future extensions like:
    - Define system prompts for Cypher generation
    - Add validation of generated Cypher queries
    - Include error handling for malformed queries
+   - Pass graph metadata (relationship types, node labels) to improve query generation
 
 2. **Implement Graph Summarizer Agent** ✅
    - Create `services/agents/graphSummarizer.ts`
@@ -140,31 +156,44 @@ This architecture supports future extensions like:
    - Combine agents, retriever, and LLM in a coherent pipeline
    - Implement proper context windows and prompt engineering
    - Create `services/graph/graphRAG.ts` to integrate all components
+   - Add support for passing graph metadata through the pipeline
 
-### Phase 4: API Layer Refactoring
+### Phase 4: API Layer Refactoring ✅
 
-1. **Refactor Chat API**
+1. **Refactor Chat API** ✅
    - Update `app/api/chat/stream/route.ts` to use the new service layer
    - Implement proper streaming of combined results
    - Add error handling and fallback strategies
+   - Pass graph metadata from frontend to backend
 
-2. **Implement Graph API Endpoints**
+2. **Implement Graph API Endpoints** ✅
    - Create `/api/graph/query` for direct Cypher execution
    - Implement `/api/graph/rag` for the complete RAG pipeline
    - Add appropriate authentication and rate limiting
 
-### Phase 5: Frontend Integration
+### Phase 5: Frontend Integration ✅
 
-1. **Update Chat Component**
+1. **Update Chat Component** ✅
    - Modify `components/chat.tsx` to handle graph-specific responses
    - Add UI indicators for when graph queries are being processed
+   - Pass graph metadata to backend for better query generation
 
-2. **Enhance Graph Visualization**
+2. **Enhance Graph Visualization** ✅
    - Update integration between chat responses and graph updates
    - Add animations for graph transitions
    - Implement highlighting of relevant nodes/edges
 
-### Phase 6: Testing and Optimization
+### Phase 6: Response Quality Improvements ✅
+
+1. **Natural Language Responses** ✅
+   - Implement conversational formatting for graph data
+   - Present nodes and relationships in human-readable narrative form
+
+2. **Follow-up Questions** ✅
+   - Add interactive follow-up question buttons
+   - Ensure seamless conversation flow with follow-up topics
+
+### Phase 7: Testing and Optimization 🔄
 
 1. **Unit and Integration Tests**
    - Write tests for individual agents and the RAG pipeline
@@ -174,10 +203,45 @@ This architecture supports future extensions like:
    - Profile and optimize Neo4j queries
    - Implement caching layers for repeated queries
    - Add loading indicators and progressive rendering
+   
+3. **LangChain Integration** 
+   - Evaluate GraphCypherQAChain as a replacement for custom query generation
+   - Preserve existing UX features like streaming responses and follow-up questions
+   - Improve query accuracy and response quality with LangChain's proven patterns
 
 ## Getting Started
 
-(Development and deployment instructions to be added)
+### Prerequisites
+
+- Node.js 16+
+- Neo4j database
+- Google AI Studio API key
+
+### Installation
+
+1. Clone the repository
+   ```bash
+   git clone https://github.com/yourusername/shiagraph.git
+   cd shiagraph
+   ```
+
+2. Install dependencies
+   ```bash
+   npm install
+   ```
+
+3. Set up environment variables (create a `.env.local` file)
+   ```
+   NEO4J_URI=bolt://localhost:7687
+   NEO4J_USER=neo4j
+   NEO4J_PASSWORD=your_password
+   GOOGLE_API_KEY=your_google_api_key
+   ```
+
+4. Start the development server
+   ```bash
+   npm run dev
+   ```
 
 ## Technologies
 

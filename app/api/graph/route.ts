@@ -64,31 +64,46 @@ export async function POST(req: NextRequest) {
       const links: any[] = [];
 
       for (const record of result.records) {
-        const n = record.get('n');
-        const m = record.get('m');
-        const r = record.get('r');
-
-        if (n && m && r) {
-          [n, m].forEach((node) => {
-            if (node && node.identity && !nodes[node.identity]) {
-              nodes[node.identity] = {
-                id: node.identity,
-                label: node.labels && node.labels[0] ? node.labels[0] : 'Unknown',
-                ...node.properties,
+        console.log("Record keys:", record.keys);
+        
+        // Process each field in the record
+        for (const key of record.keys) {
+          const item = record.get(key);
+          
+          // Skip null or undefined items
+          if (!item || !item.identity) continue;
+          
+          // Process as a node if it has identity and labels properties
+          if (item.labels) {
+            const nodeId = item.identity;
+            
+            if (!nodes[nodeId]) {
+              nodes[nodeId] = {
+                id: nodeId,
+                label: item.labels && item.labels[0] ? item.labels[0] : 'Unknown',
+                ...item.properties,
               };
             }
-          });
-
-          // Store relationship with source and target as IDs
-          links.push({
-            id: r.identity,
-            source: n.identity, // Use node ID instead of r.start
-            target: m.identity, // Use node ID instead of r.end
-            type: r.type,
-            ...r.properties,
-          });
+          }
+          
+          // Process as a relationship if it has start, end, and type properties
+          if (item.start !== undefined && item.end !== undefined && item.type) {
+            // Store relationship with source and target as IDs
+            links.push({
+              id: item.identity,
+              source: item.start,
+              target: item.end,
+              type: item.type,
+              ...item.properties,
+            });
+          }
         }
       }
+      
+      // Now connect nodes and relationships
+      const validLinks = links.filter(link => 
+        nodes[link.source] && nodes[link.target]
+      );
 
       /* Fetch all relationship types for filter‑UI ----------------------------*/
       const relTypesRes = await session.run(
@@ -98,7 +113,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           nodes: Object.values(nodes),
-          links,
+          links: validLinks,
           relationshipTypesAvailable: relTypesRes.records[0].get('types'),
           executedQuery: query // Return the executed query for debugging
         },

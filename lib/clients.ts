@@ -8,102 +8,109 @@ const apiUrl =
 export async function streamChat({ 
   inputContent, 
   setIsLoading, 
-  append 
+  append,
+  graphMetadata
 }: { 
   inputContent: string; 
   setIsLoading: (loading: boolean) => void; 
   append: (message: Message) => Promise<string | null | undefined>;
+  graphMetadata?: {
+    relationshipTypes: string[];
+    nodeCount: number;
+    nodeLabels?: string[];
+  };
 }) {
   setIsLoading(true);
+  console.log("Starting stream chat with query:", inputContent);
 
+  // Create a new message to display the assistant's response
+  const assistantMessage: Message = {
+    id: crypto.randomUUID(),
+    content: "",
+    role: "assistant",
+  };
+
+  // Track if we're currently receiving a follow-up message
+  let receivingFollowUp = false;
+  
   try {
-    const response = await fetch("/api/chat/stream", {
+    // Using fetchEventSource which handles SSE more robustly
+    await fetchEventSource("/api/chat/stream", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         query: inputContent,
+        graphMetadata
       }),
+      async onmessage(event) {
+        try {
+          console.log("Event received:", event.data.substring(0, 50) + "...");
+          const data = JSON.parse(event.data);
+          
+          // Handle text content
+          if (data.content !== undefined) {
+            let cleanContent = data.content;
+            
+            // Skip empty content after cleaning
+            if (cleanContent.trim() === '') {
+              return;
+            }
+            
+            // Add the cleaned content to the message
+            assistantMessage.content += cleanContent;
+            await append(assistantMessage);
+            console.log("Updated UI with content, total length:", assistantMessage.content.length);
+          }
+          
+          // Handle follow-up questions with special marker for UI rendering
+          if (data.type === 'follow_up_questions' && data.questions && data.questions.length > 0) {
+            // Clean up question - remove any explanations
+            let cleanQuestion = data.questions[0].split(/[.(]/, 1)[0].trim();
+            
+            // Special marker for the UI to render as a button
+            const formattedQuestion = `\n\n{{follow_up_question:${cleanQuestion}}}`;
+            
+            assistantMessage.content += formattedQuestion;
+            await append(assistantMessage);
+          }
+          
+          // Handle graph data - visualization is handled by the UI
+          if (data.type === 'graph_update' && data.data) {
+            console.log("Graph data received - visualization should update");
+          }
+          
+          // Handle error messages
+          if (data.error) {
+            assistantMessage.content += `\n\nError: ${data.error}`;
+            await append(assistantMessage);
+          }
+        } catch (error) {
+          console.error("Error processing event:", error);
+        }
+      },
+      async onopen(response) {
+        console.log("Stream connection opened:", response.status);
+        if (response.ok) {
+          console.log("Response OK, status:", response.status);
+        } else {
+          console.error("Stream response not OK:", response.status);
+        }
+      },
+      onerror(err) {
+        console.error("Stream error:", err);
+        throw err;
+      },
+      onclose() {
+        console.log("Stream connection closed");
+        setIsLoading(false);
+      }
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    // Create a new message to display the assistant's response
-    const assistantMessage: Message = {
-      id: crypto.randomUUID(),
-      content: "",
-      role: "assistant",
-    };
-
-    // Set up the event source for server-sent events
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
-
-    if (!reader) {
-      throw new Error("Response body is null");
-    }
-
-    let done = false;
-    let contentBuffer = '';
-    const UPDATE_THRESHOLD = 5; // Update UI after collecting this many characters
-    
-    while (!done) {
-      const { value, done: doneReading } = await reader.read();
-      done = doneReading;
-
-      if (done) {
-        // Flush any remaining content in the buffer
-        if (contentBuffer.length > 0) {
-          assistantMessage.content += contentBuffer;
-          await append(assistantMessage);
-          contentBuffer = '';
-        }
-        break;
-      }
-
-      // Decode the chunk and split by event delimiter
-      const chunk = decoder.decode(value, { stream: true });
-      const events = chunk.split("\n\n").filter(Boolean);
-
-      for (const event of events) {
-        if (event.startsWith("data: ")) {
-          try {
-            const data = JSON.parse(event.slice(6));
-
-            // Handle different types of events
-            if (data.type === 'graph_update') {
-              // Graph update event - dispatch a custom event to update GraphViewer
-              dispatchGraphUpdateEvent(data);
-            } else if (data.content !== undefined) {
-              // Collect content in buffer
-              contentBuffer += data.content;
-              
-              // Only update UI when we have enough content or on special characters
-              if (contentBuffer.length >= UPDATE_THRESHOLD || 
-                  contentBuffer.includes('\n') || 
-                  contentBuffer.includes('.') || 
-                  contentBuffer.includes('?') || 
-                  contentBuffer.includes('!')) {
-                assistantMessage.content += contentBuffer;
-                await append(assistantMessage);
-                contentBuffer = '';
-              }
-            }
-          } catch (error) {
-            console.error("Error parsing SSE data:", error, event);
-          }
-        }
-      }
-    }
-
-    // Finish
-    setIsLoading(false);
     return assistantMessage.content;
   } catch (error) {
-    console.error("Error streaming chat:", error);
+    console.error("Error in stream chat:", error);
     setIsLoading(false);
     
     // Create an error message
@@ -115,18 +122,5 @@ export async function streamChat({
     await append(errorMessage);
     
     return null;
-  }
-}
-
-// Helper function to dispatch graph update events
-function dispatchGraphUpdateEvent(data: any) {
-  try {
-    // Create and dispatch a custom event with the graph data
-    const event = new MessageEvent('message', {
-      data: JSON.stringify(data)
-    });
-    document.dispatchEvent(event);
-  } catch (error) {
-    console.error("Error dispatching graph update event:", error);
   }
 }

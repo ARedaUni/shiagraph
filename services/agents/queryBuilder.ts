@@ -35,31 +35,54 @@ export class QueryBuilderAgent {
   /**
    * System prompt template for query generation
    */
-  private getSystemPrompt(): string {
+  private getSystemPrompt(graphMetadata?: { 
+    relationshipTypes: string[], 
+    nodeCount: number, 
+    nodeLabels?: string[] 
+  }): string {
+    let metadataInfo = '';
+    
+    // Add available metadata information
+    if (graphMetadata) {
+      metadataInfo = `
+Available information about the current graph:
+${graphMetadata.nodeCount ? `- Node count: ${graphMetadata.nodeCount}` : ''}
+${graphMetadata.nodeLabels && graphMetadata.nodeLabels.length > 0 ? 
+`- Node labels: ${graphMetadata.nodeLabels.join(', ')}` : ''}
+${graphMetadata.relationshipTypes && graphMetadata.relationshipTypes.length > 0 ? 
+`- Relationship types: ${graphMetadata.relationshipTypes.join(', ')}` : ''}`;
+    }
+    
     return `You are an expert in Neo4j and the Cypher query language. Your task is to convert natural language questions about a knowledge graph into executable Cypher queries.
 
-The knowledge graph contains information from a Discord server with the following structure:
-- User nodes with properties like name, location, interests
-- Message nodes representing chat messages with content and timestamp
-- Topic nodes representing discussion topics
-- SENT relationship between User and Message
-- MENTIONS relationship between Messages and Users/Topics
-- INTERESTED_IN relationship between Users and Topics
-- LOCATED_IN relationship between Users and locations
+The knowledge graph contains information structured as nodes and relationships.${metadataInfo}
+
+IMPORTANT GUIDELINES:
+1. ALWAYS use the pipe symbol (|) to combine ALL potentially relevant node labels from the metadata. Never use just a single label.
+2. For each entity type (person, place, topic, etc.), identify ALL possible labels from the metadata and combine them with pipes.
+3. Also use the pipe symbol for ALL semantically similar relationship types from the metadata.
+4. Occupations are typically modeled as nodes with relationships, not as properties.
+5. Use the available node labels and relationship types from the metadata to construct your queries.
+6. Make no assumptions about the graph structure beyond what is provided in the metadata.
+
+For example, if the metadata contains labels like "Person", "User", "Member", and "Individual", you should use (p:Person|User|Member|Individual) in your query, not just (p:Person).
 
 Respond with a valid Cypher query that answers the user's question. Focus on creating efficient, accurate queries. Wrap your query in triple backticks.
 
-Examples:
+Examples (these are general patterns - modify them to use ALL relevant labels from the metadata):
 1. Question: "Who is from Canada?"
-   Cypher: \`\`\`MATCH (u:User)-[:LOCATED_IN]->(l:Location {name: "Canada"}) RETURN u.name, u.interests\`\`\`
+   Cypher: \`\`\`MATCH (person:Label1|Label2|Label3)-[location_rel:LIVES_IN|LOCATED_IN|FROM|BORN_IN]->(place {name: "Canada"}) RETURN person.name\`\`\`
 
-2. Question: "What topics does user John discuss most?"
-   Cypher: \`\`\`MATCH (u:User {name: "John"})-[:SENT]->(m:Message)-[:MENTIONS]->(t:Topic) 
-   RETURN t.name, count(*) as frequency 
+2. Question: "Who is a software developer?"
+   Cypher: \`\`\`MATCH (person:Label1|Label2|Label3)-[occupation_rel:WORKS_AS|HAS_ROLE|EMPLOYED_AS]->(job {title: "Software Developer"}) RETURN person.name\`\`\`
+
+3. Question: "What topics does user John discuss most?"
+   Cypher: \`\`\`MATCH (person:Label1|Label2|Label3 {name: "John"})-[message_rel:POSTED|WROTE|CREATED]->(message)-[topic_rel:ABOUT|DISCUSSES|MENTIONS]->(topic:TopicLabel1|TopicLabel2) 
+   RETURN topic.name, count(*) as frequency 
    ORDER BY frequency DESC LIMIT 5\`\`\`
 
-3. Question: "Find connections between AI and spirituality topics"
-   Cypher: \`\`\`MATCH path = (:Topic {name: "AI"})-[*1..3]-(:Topic {name: "spirituality"})
+4. Question: "Find connections between AI and spirituality topics"
+   Cypher: \`\`\`MATCH path = (topic1:TopicLabel1|TopicLabel2 {name: "AI"})-[rel:RELATED_TO|CONNECTED_TO|ASSOCIATED_WITH|LINKED_TO*1..3]-(topic2:TopicLabel1|TopicLabel2 {name: "spirituality"})
    RETURN path LIMIT 10\`\`\`
 
 After your query, provide a brief explanation of how it works.`;
@@ -133,13 +156,20 @@ After your query, provide a brief explanation of how it works.`;
    * Convert a natural language question into a Cypher query
    * 
    * @param question Natural language question about the graph
+   * @param graphMetadata Optional metadata about the graph to help with query generation
    * @returns Generated Cypher query and explanation
    */
-  public async buildQuery(question: string): Promise<QueryBuilderResponse> {
+  public async buildQuery(
+    question: string, 
+    graphMetadata?: { 
+      relationshipTypes: string[], 
+      nodeCount: number 
+    }
+  ): Promise<QueryBuilderResponse> {
     try {
       // Create conversation with system prompt and user question
       const messages: Message[] = [
-        { role: 'system', content: this.getSystemPrompt() },
+        { role: 'system', content: this.getSystemPrompt(graphMetadata) },
         { role: 'user', content: question }
       ];
       

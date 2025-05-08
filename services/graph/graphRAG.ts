@@ -43,9 +43,17 @@ export class GraphRAG {
    * Process a user query through the GraphRAG pipeline
    * 
    * @param query The user's natural language query
+   * @param graphMetadata Optional metadata about the graph to help with query generation
    * @returns Response with text and graph data
    */
-  public async processQuery(query: string): Promise<GraphRAGResponse> {
+  public async processQuery(
+    query: string, 
+    graphMetadata?: { 
+      relationshipTypes: string[],
+      nodeCount: number,
+      nodeLabels?: string[]
+    }
+  ): Promise<GraphRAGResponse> {
     try {
       // Step 1: Classify the intent of the query
       const classification = await intentClassifier.classifyIntent(query);
@@ -76,7 +84,7 @@ export class GraphRAG {
       }
       
       // Step 2: Generate a Cypher query from the natural language
-      const queryResult = await queryBuilder.buildQuery(query);
+      const queryResult = await queryBuilder.buildQuery(query, graphMetadata);
       
       if (!queryResult.isValid || !queryResult.cypher) {
         return {
@@ -98,14 +106,71 @@ export class GraphRAG {
         };
       }
       
-      // Step 4: Summarize the graph results
-      const summary = await graphSummarizer.summarizeGraph(graphData, query);
+      // If no results were found, provide a clear message
+      if (graphData.nodes.length === 0) {
+        return {
+          text: `I couldn't find any results matching your query about "${query}".`,
+          graphData,
+          generatedQuery: queryResult.cypher
+        };
+      }
+      
+      // Step 4: Format the response based on the graph data
+      let responseText = '';
+      
+      // Special case for single-node queries like "who is X"
+      if (graphData.nodes.length === 1 && graphData.links.length === 0 && 
+          (query.toLowerCase().includes('who is') || query.toLowerCase().includes('who\'s'))) {
+        const node = graphData.nodes[0];
+        responseText = `${node.name || node.id} is a ${node.label || 'person'} in the database.`;
+        
+        // Add node properties in a natural way
+        if (node.properties) {
+          const properties = Object.entries(node.properties);
+          if (properties.length > 0) {
+            responseText += "\n\n";
+            for (const [key, value] of properties) {
+              // Format key as readable text (e.g., "user_id" -> "User ID")
+              const readableKey = key
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, l => l.toUpperCase());
+              
+              responseText += `${readableKey}: ${value}\n`;
+            }
+          }
+        }
+      } 
+      // For multiple people (common case)
+      else if (graphData.nodes.length > 0 && 
+               graphData.nodes.every(node => node.label === 'Person' || node.label === 'user' || node.label === 'DiscordUser')) {
+        const nodeNames = graphData.nodes.map(node => node.name || node.id);
+        
+        if (nodeNames.length <= 2) {
+          responseText = `I found ${nodeNames.join(' and ')}.`;
+        } else {
+          const lastPerson = nodeNames.pop();
+          responseText = `I found ${nodeNames.join(', ')}, and ${lastPerson}.`;
+        }
+      }
+      // Default case: use the graph summarizer
+      else {
+        // Get a summary from the graph summarizer
+        const summary = await graphSummarizer.summarizeGraph(graphData, query);
+        responseText = summary.summary;
+        
+        // Add key insights if they're meaningful
+        if (summary.keyInsights && summary.keyInsights.length > 0) {
+          responseText += '\n\n' + summary.keyInsights.map(insight => `• ${insight}`).join('\n');
+        }
+      }
       
       // Step 5: Generate follow-up questions
-      const followUpQuestions = await graphSummarizer.suggestFollowUpQuestions(graphData, query);
+      let followUpQuestions = await graphSummarizer.suggestFollowUpQuestions(graphData, query);
       
-      // Construct the response
-      const responseText = `${summary.summary}\n\n${summary.keyInsights.map(insight => `• ${insight}`).join('\n')}`;
+      // Clean up follow-up questions - remove any explanations (text after periods, dashes, or parentheses)
+      if (followUpQuestions && followUpQuestions.length > 0) {
+        followUpQuestions = followUpQuestions.map(q => q.split(/[.(]/, 1)[0].trim());
+      }
       
       return {
         text: responseText,
