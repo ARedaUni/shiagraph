@@ -435,27 +435,62 @@
       useEffect(() => {
         if (!graph.nodes.length || !size[0] || !size[1]) return;
     
-        // First verify that all nodes referenced in links exist
-        const nodeIds = new Set(graph.nodes.map(node => String(node.id)));
-        const validLinks = graph.links.filter(link => {
+        // Merge nodes with the same name
+        const uniqueNodes: Node[] = [];
+        const nodesByName = new Map<string, Node>();
+        const nodeIdToUniqueNode = new Map<string | number, Node>();
+        
+        // First pass: group nodes by name
+        graph.nodes.forEach(node => {
+          const nodeName = node.name || String(node.id);
+          
+          if (!nodesByName.has(nodeName)) {
+            // First node with this name, add it to our maps
+            nodesByName.set(nodeName, node);
+            uniqueNodes.push(node);
+            nodeIdToUniqueNode.set(String(node.id), node);
+          } else {
+            // We already have a node with this name
+            // Map this node's ID to the existing unique node
+            nodeIdToUniqueNode.set(String(node.id), nodesByName.get(nodeName)!);
+          }
+        });
+
+        // Remap links to use our unique nodes
+        const remappedLinks = graph.links.map(link => {
           const sourceId = typeof link.source === 'object' ? String(link.source.id) : String(link.source);
           const targetId = typeof link.target === 'object' ? String(link.target.id) : String(link.target);
-          return nodeIds.has(sourceId) && nodeIds.has(targetId);
+          
+          // Get the unique nodes that these IDs map to
+          const uniqueSource = nodeIdToUniqueNode.get(sourceId);
+          const uniqueTarget = nodeIdToUniqueNode.get(targetId);
+          
+          if (uniqueSource && uniqueTarget) {
+            return {
+              ...link,
+              source: uniqueSource,
+              target: uniqueTarget
+            };
+          }
+          return link;
+        }).filter(link => {
+          // Filter out any links whose source or target is undefined
+          return typeof link.source === 'object' && typeof link.target === 'object';
         });
-    
+        
         if (!simRef.current) simRef.current = d3.forceSimulation<Node, Link>();
         const sim = simRef.current;
-    
+
         const applyForces = () => {
           // clear
           sim.force('link', null).force('charge', null).force('center', null).force('collision', null).force('xCluster', null).force('yCluster', null).force('gravityWell', null).force('jitter', null);
-    
+
           // link
           if (toggles.enableElasticLinks) {
             sim.force(
               'link',
               d3
-                .forceLink<Node, Link>(validLinks)
+                .forceLink<Node, Link>(remappedLinks)
                 .id((d: Node) => d.id)
                 .distance((d: Link, i: number) => 50 + Math.sin(i) * 20)
                 .strength(0.1)
@@ -464,16 +499,16 @@
             sim.force(
               'link',
               d3
-                .forceLink<Node, Link>(validLinks)
+                .forceLink<Node, Link>(remappedLinks)
                 .id((d: Node) => d.id)
                 .distance(forces.linkDistance)
                 .strength(forces.linkForce)
             );
           }
-    
+
           // charge
           sim.force('charge', d3.forceManyBody().strength(forces.repelForce));
-    
+
           // center / clustering
           if (toggles.enableClustering) {
             const centers: Record<string, { x: number; y: number }> = {
@@ -487,7 +522,7 @@
           } else {
             sim.force('center', d3.forceCenter(size[0] / 2, size[1] / 2).strength(forces.centerForce));
           }
-    
+
           // collision / repulsion zones
           if (toggles.enableRepulsionZones) {
             sim.force('innerCollision', d3.forceCollide(forces.collisionRadius).strength(1));
@@ -495,26 +530,26 @@
           } else {
             sim.force('collision', d3.forceCollide(forces.collisionRadius).strength(0.7));
           }
-    
+
           // gravity well
           if (toggles.enableGravityWell) {
             sim.force('gravityWell', d3.forceRadial(forces.radialRadius, size[0] / 2, size[1] / 2).strength(0.5));
           }
-    
+
           // jitter
           if (toggles.enableJitter) {
-            sim.force('jitter', (alpha) => {
-              sim.nodes().forEach((n) => {
+            sim.force('jitter', (alpha: number) => {
+              sim.nodes().forEach((n: Node) => {
                 n.vx! += (Math.random() - 0.5) * alpha * 0.5;
                 n.vy! += (Math.random() - 0.5) * alpha * 0.5;
               });
             });
           }
-    
+
           sim.alpha(1).restart();
         };
-    
-        sim.nodes(graph.nodes);
+
+        sim.nodes(uniqueNodes);
         applyForces();
     
         sim.on('tick', () => {
@@ -805,11 +840,11 @@
         linkThickness: 1,
       });
       const [layoutType, setLayoutType] = useState<string>('force');
-      const [numberOfNodes, setNumberOfNodes] = useState<number>(1000);
+      const [numberOfNodes, setNumberOfNodes] = useState<number>(100);
       const [queryType, setQueryType] = useState<string>('default');
       const [toggles, setToggles] = useState<AdvancedToggles>({
         enableJitter: false,
-        enableGravityWell: false,
+        enableGravityWell: true,
         enableOrbiting: false,
         enableRepulsionZones: false,
         enableElasticLinks: false,
@@ -832,6 +867,7 @@
           });
           if (!res.ok) throw new Error(`API ${res.status}`);
           const data = await res.json();
+          console.log(data.nodes)
           setGraph({ nodes: data.nodes ?? [], links: data.links ?? [] });
           setError(null);
         } catch (e) {
