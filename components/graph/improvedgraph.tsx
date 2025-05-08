@@ -692,47 +692,75 @@
       useEffect(() => {
         if (!canvasRef.current) return;
         const sel = d3.select(canvasRef.current);
-    
-        // zoom
-        const zoom = d3.zoom<HTMLCanvasElement, unknown>().scaleExtent([0.1, 6]).on('zoom', (e) => {
-          zRef.current = e.transform;
-          render();
-        });
+        const canvas = canvasRef.current;
+
+        // Track if modifier key is pressed to update cursor
+        let isModifierPressed = false;
+        
+        const updateCursor = () => {
+          canvas.style.cursor = isModifierPressed ? 'grab' : 'default';
+        };
+        
+        // Add event listeners for modifier keys
+        const handleKeyDown = (e: KeyboardEvent) => {
+          const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+          const isModifierKey = isMac ? e.metaKey : e.ctrlKey;
+          if (isModifierKey && !isModifierPressed) {
+            isModifierPressed = true;
+            updateCursor();
+          }
+        };
+        
+        const handleKeyUp = (e: KeyboardEvent) => {
+          const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+          const isModifierKey = isMac ? e.metaKey : e.ctrlKey;
+          if (isModifierKey && isModifierPressed) {
+            isModifierPressed = false;
+            updateCursor();
+          }
+        };
+        
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+
+        // zoom with modifier key filter
+        const zoom = d3.zoom<HTMLCanvasElement, unknown>()
+          .scaleExtent([0.1, 6])
+          .filter((event: MouseEvent) => {
+            // Allow zooming with mouse wheel always
+            if (event.type === 'wheel') return true;
+            
+            // For panning (drag events), require command key on Mac or control key elsewhere
+            const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+            return isMac ? event.metaKey : event.ctrlKey;
+          })
+          .on('zoom', (e: d3.D3ZoomEvent<HTMLCanvasElement, unknown>) => {
+            zRef.current = e.transform;
+            render();
+          });
+          
         sel.call(zoom as any);
-    
+
         // drag node behaviour
         const subject = (event: any) => {
           if (!qtRef.current) return null;
           const [mx, my] = zRef.current.invert(d3.pointer(event));
           return qtRef.current.find(mx, my, display.nodeSize + 2);
         };
-        const drag = d3
-          .drag<HTMLCanvasElement, Node>()
-          .subject(subject as any)
-          .on('start', (e) => {
-            (e.sourceEvent as MouseEvent).stopPropagation();
-            simRef.current?.alphaTarget(0.3).restart();
-            e.subject.fx = e.subject.x;
-            e.subject.fy = e.subject.y;
-          })
-          .on('drag', (e) => {
-            const [mx, my] = zRef.current.invert([e.x, e.y]);
-            e.subject.fx = mx;
-            e.subject.fy = my;
-          })
-          .on('end', (e) => {
-            simRef.current?.alphaTarget(0);
-            e.subject.fx = null;
-            e.subject.fy = null;
-          });
-        sel.call(drag as any);
-    
-        // hover + click
-        const hoverDelay = 60;
-        sel.on('mousemove', (ev) => {
+        
+        // Update cursor when hovering over nodes
+        sel.on('mousemove', (ev: MouseEvent) => {
           const [mx, my] = d3.pointer(ev as any);
           const [x, y] = zRef.current.invert([mx, my]);
           const n = qtRef.current?.find(x, y, display.nodeSize + 1) ?? null;
+          
+          // Set cursor based on whether we're hovering over a node
+          if (n) {
+            canvas.style.cursor = 'pointer';
+          } else {
+            updateCursor();
+          }
+          
           if (hoverTimeout.current) {
             clearTimeout(hoverTimeout.current);
             hoverTimeout.current = null;
@@ -742,24 +770,61 @@
               hoveredNodeRef.current = n;
               render();
             }
-          }, hoverDelay);
+          }, 60);
         });
-    
+        
+        const drag = d3
+          .drag<HTMLCanvasElement, Node>()
+          .subject(subject as any)
+          .on('start', (e: d3.D3DragEvent<HTMLCanvasElement, Node, Node>) => {
+            (e.sourceEvent as MouseEvent).stopPropagation();
+            simRef.current?.alphaTarget(0.3).restart();
+            e.subject.fx = e.subject.x;
+            e.subject.fy = e.subject.y;
+            canvas.style.cursor = 'grabbing';
+          })
+          .on('drag', (e: d3.D3DragEvent<HTMLCanvasElement, Node, Node>) => {
+            // Fix offset issue by directly using the transformed coordinates
+            const sourceEvent = e.sourceEvent as MouseEvent;
+            const rect = canvas.getBoundingClientRect();
+            const x = sourceEvent.clientX - rect.left;
+            const y = sourceEvent.clientY - rect.top;
+            const [transformedX, transformedY] = zRef.current.invert([x, y]);
+            
+            e.subject.fx = transformedX;
+            e.subject.fy = transformedY;
+          })
+          .on('end', (e: d3.D3DragEvent<HTMLCanvasElement, Node, Node>) => {
+            simRef.current?.alphaTarget(0);
+            e.subject.fx = null;
+            e.subject.fy = null;
+            // Reset cursor when done dragging
+            if (hoveredNodeRef.current) {
+              canvas.style.cursor = 'pointer';
+            } else {
+              updateCursor();
+            }
+          });
+        sel.call(drag as any);
+
         sel.on('mouseleave', () => {
           if (hoveredNodeRef.current) {
             hoveredNodeRef.current = null;
             render();
           }
+          canvas.style.cursor = 'default';
         });
-    
-        sel.on('click', (ev) => {
+
+        sel.on('click', (ev: MouseEvent) => {
           const [mx, my] = d3.pointer(ev as any);
           const [x, y] = zRef.current.invert([mx, my]);
           const n = qtRef.current?.find(x, y, display.nodeSize + 1) ?? null;
           onNodeSelect(n);
         });
-    
+
         return () => {
+          window.removeEventListener('keydown', handleKeyDown);
+          window.removeEventListener('keyup', handleKeyUp);
           sel.on('.zoom', null).on('.drag', null).on('mousemove', null).on('mouseleave', null).on('click', null);
         };
       }, [render, display.nodeSize, onNodeSelect]);
@@ -771,7 +836,7 @@
     
       return (
         <div ref={containerRef} className="w-full h-full">
-          <canvas ref={canvasRef} width={size[0]} height={size[1]} className="block w-full h-full cursor-grab" />
+          <canvas ref={canvasRef} width={size[0]} height={size[1]} className="block w-full h-full" />
         </div>
       );
     };
