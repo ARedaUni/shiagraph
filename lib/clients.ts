@@ -31,7 +31,7 @@ export async function streamChat({
   };
 
   // Track if we're currently receiving a follow-up message
-  let receivingFollowUp = false;
+  const receivingFollowUp = false;
   
   try {
     // Using fetchEventSource which handles SSE more robustly
@@ -51,7 +51,7 @@ export async function streamChat({
           
           // Handle text content
           if (data.content !== undefined) {
-            let cleanContent = data.content;
+            const cleanContent = data.content;
             
             // Skip empty content after cleaning
             if (cleanContent.trim() === '') {
@@ -67,7 +67,7 @@ export async function streamChat({
           // Handle follow-up questions with special marker for UI rendering
           if (data.type === 'follow_up_questions' && data.questions && data.questions.length > 0) {
             // Clean up question - remove any explanations
-            let cleanQuestion = data.questions[0].split(/[.(]/, 1)[0].trim();
+            const cleanQuestion = data.questions[0].split(/[.(]/, 1)[0].trim();
             
             // Special marker for the UI to render as a button
             const formattedQuestion = `\n\n{{follow_up_question:${cleanQuestion}}}`;
