@@ -2,7 +2,7 @@
     GraphVisualizer.tsx                                    (drop-in component)
     -------------------------------------------------------------------------
     • Robust guard-rails: **never** passes a link whose source/target is
-      undefined (fixes “node not found” once and for all).
+      undefined (fixes "node not found" once and for all).
     • Unified `buildVisibleGraph` pipeline with *strict* validation.
     • If a filter hides the currently-selected node, the side-panel closes.
     • All hooks have explicit dependency arrays – easy to reason about.
@@ -111,29 +111,111 @@
       }
     
       /* 4. Nodes array (object refs from raw.nodes)                   */
-      const nodes = raw.nodes.filter((n) => requiredIds.has(n.id));
+      const filteredNodes = raw.nodes.filter((n) => requiredIds.has(n.id));
     
-      /* 5. Map ids → node objects so links can share instance refs    */
-      const idToNode = new Map<Node['id'], Node>();
-      nodes.forEach((n) => idToNode.set(n.id, n));
-    
-      /* 6. Build links array—but **skip** any whose endpoints missing */
-      const links: Link[] = [];
-      step1.forEach((l) => {
-        const sid = typeof l.source === 'object' ? l.source.id : l.source;
-        const tid = typeof l.target === 'object' ? l.target.id : l.target;
-        const src = idToNode.get(sid);
-        const tgt = idToNode.get(tid);
-        if (src && tgt) {
-          links.push({
-            ...l,
-            source: src,
-            target: tgt,
-          });
+      /* 5. Merge nodes with the same name                             */
+      const nameToNodes = new Map<string, Node[]>();
+      const uniqueNodes: Node[] = [];
+      
+      // Group nodes by name
+      filteredNodes.forEach((node) => {
+        const name = (node.name ?? node.id).toString();
+        if (!nameToNodes.has(name)) {
+          nameToNodes.set(name, []);
+        }
+        nameToNodes.get(name)!.push(node);
+      });
+      
+      // For each name, merge the nodes
+      nameToNodes.forEach((nodes, name) => {
+        if (nodes.length === 1) {
+          // If only one node has this name, keep it as is
+          uniqueNodes.push(nodes[0]);
+        } else {
+          // Find any node that has position information (from previous simulation state)
+          const nodeWithPosition = nodes.find(n => n.x !== undefined && n.y !== undefined);
+          
+          // Merge multiple nodes with the same name
+          const mergedNode: Node = {
+            // Use the first node's ID (could be any strategy)
+            id: nodes[0].id,
+            name: name,
+            // Combine groups or use the first non-empty one
+            group: nodes.find(n => n.group)?.group,
+            // Combine labels or use the first non-empty one
+            label: nodes.find(n => n.label)?.label,
+            // Use the first description or combine them
+            description: nodes.find(n => n.description)?.description,
+            // Merge properties
+            properties: nodes.reduce((acc, node) => {
+              return { ...acc, ...(node.properties || {}) };
+            }, {}),
+            // Preserve position information if available
+            ...(nodeWithPosition ? {
+              x: nodeWithPosition.x,
+              y: nodeWithPosition.y,
+              vx: nodeWithPosition.vx,
+              vy: nodeWithPosition.vy,
+              fx: nodeWithPosition.fx,
+              fy: nodeWithPosition.fy
+            } : {})
+          };
+          uniqueNodes.push(mergedNode);
         }
       });
     
-      return { nodes, links };
+      /* 6. Map ids → node objects so links can share instance refs    */
+      const idToNode = new Map<Node['id'], Node>();
+      uniqueNodes.forEach((n) => idToNode.set(n.id, n));
+      
+      // Create name to node map for resolving link endpoints
+      const nameToNode = new Map<string, Node>();
+      uniqueNodes.forEach((n) => {
+        const name = (n.name ?? n.id).toString();
+        nameToNode.set(name, n);
+      });
+    
+      /* 7. Build links array—map endpoints to merged nodes            */
+      const links: Link[] = [];
+      const processedLinkIds = new Set<string>();
+    
+      step1.forEach((l) => {
+        const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+        const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+        
+        // Find the source node by ID
+        let src = idToNode.get(sourceId);
+        
+        // If not found directly, check if it was merged
+        if (!src && typeof l.source === 'object' && l.source.name) {
+          src = nameToNode.get(l.source.name);
+        }
+        
+        // Find the target node by ID
+        let tgt = idToNode.get(targetId);
+        
+        // If not found directly, check if it was merged
+        if (!tgt && typeof l.target === 'object' && l.target.name) {
+          tgt = nameToNode.get(l.target.name);
+        }
+        
+        // Only create the link if both endpoints exist
+        if (src && tgt) {
+          // Create a unique ID for the link to avoid duplicates
+          const linkId = `${src.id}-${l.type}-${tgt.id}`;
+          
+          if (!processedLinkIds.has(linkId)) {
+            links.push({
+              ...l,
+              source: src,
+              target: tgt,
+            });
+            processedLinkIds.add(linkId);
+          }
+        }
+      });
+    
+      return { nodes: uniqueNodes, links };
     }
     
     /* Utility */
@@ -458,7 +540,14 @@
           });
           if (!res.ok) throw new Error(`API ${res.status}`);
           const data = await res.json();
-          setGraph({ nodes: data.nodes ?? [], links: data.links ?? [] });
+          
+          // Process the data to deduplicate nodes with the same name at source
+          const processedData = preprocessGraphData(data);
+          
+          setGraph({ 
+            nodes: processedData.nodes ?? [], 
+            links: processedData.links ?? [] 
+          });
           setRelTypes(data.relationshipTypesAvailable ?? []);
           setError(null);
         } catch (e) {
@@ -468,6 +557,83 @@
           setLoading(false);
         }
       }, [limit]);
+    
+      // Preprocess graph data to merge nodes with the same name
+      const preprocessGraphData = (data: any): Graph => {
+        const { nodes = [], links = [] } = data;
+        
+        // Map to store unique nodes by name
+        const nameToUniqueNode = new Map<string, Node>();
+        const idToNameMap = new Map<Node['id'], string>();
+        
+        // First pass: create unique nodes by name
+        nodes.forEach((node: Node) => {
+          const name = (node.name ?? node.id).toString();
+          
+          if (!nameToUniqueNode.has(name)) {
+            // This is the first node with this name
+            nameToUniqueNode.set(name, { ...node });
+          } else {
+            // Merge with existing node with the same name
+            const existingNode = nameToUniqueNode.get(name)!;
+            
+            // Update the existing node with any new properties
+            if (node.group && !existingNode.group) existingNode.group = node.group;
+            if (node.label && !existingNode.label) existingNode.label = node.label;
+            if (node.description && !existingNode.description) existingNode.description = node.description;
+            
+            // Merge properties
+            existingNode.properties = {
+              ...(existingNode.properties || {}),
+              ...(node.properties || {})
+            };
+          }
+          
+          // Keep track of which ID maps to which name
+          idToNameMap.set(node.id, name);
+        });
+        
+        // Convert the map of unique nodes back to an array
+        const uniqueNodes = Array.from(nameToUniqueNode.values());
+        
+        // Process links to point to the deduplicated nodes
+        const processedLinks: Link[] = [];
+        const linkMap = new Map<string, Link>();
+        
+        links.forEach((link: Link) => {
+          const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+          const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+          
+          // Get the names for the source and target nodes
+          const sourceName = idToNameMap.get(sourceId);
+          const targetName = idToNameMap.get(targetId);
+          
+          if (sourceName && targetName) {
+            // Get the deduplicated nodes
+            const sourceNode = nameToUniqueNode.get(sourceName);
+            const targetNode = nameToUniqueNode.get(targetName);
+            
+            if (sourceNode && targetNode) {
+              // Create a unique identifier for this link
+              const linkKey = `${sourceName}-${link.type}-${targetName}`;
+              
+              if (!linkMap.has(linkKey)) {
+                // This is a new unique link
+                linkMap.set(linkKey, {
+                  ...link,
+                  source: sourceNode,
+                  target: targetNode
+                });
+              }
+            }
+          }
+        });
+        
+        return {
+          nodes: uniqueNodes,
+          links: Array.from(linkMap.values())
+        };
+      };
     
       useEffect(() => {
         fetchGraph();
@@ -509,7 +675,7 @@
         visible.links.forEach((l) => {
           const s = l.source as Node;
           const t = l.target as Node;
-          if (s.x == null || t.x == null) return;
+          if (s.x == null || t.x == null || s.y == null || t.y == null) return;
           ctx.beginPath();
           ctx.moveTo(s.x, s.y);
           ctx.lineTo(t.x, t.y);
