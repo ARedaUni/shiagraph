@@ -711,8 +711,26 @@
         ctx.translate(zRef.current.x, zRef.current.y);
         ctx.scale(zRef.current.k, zRef.current.k);
     
-        // color scale by group/label
-        const color = d3.scaleOrdinal<string>().domain(d3.map(graph.nodes, (d) => d.group ?? d.label ?? 'x').keys()).range(d3.schemeCategory10);
+        // Enhanced color scale for more vibrant colors
+        const baseColors = d3.schemeCategory10;
+        const vibrantColors = baseColors.map(color => {
+          // Brighten/saturate the colors for more resplendence
+          const c = d3.color(color);
+          if (c) {
+            c.opacity = 1;
+            if (c.formatHsl) {
+              const hsl = d3.hsl(c);
+              hsl.s = Math.min(1, hsl.s * 1.2); // Increase saturation
+              hsl.l = Math.min(0.65, hsl.l * 1.1); // Slightly brighten but keep contrast
+              return hsl.toString();
+            }
+          }
+          return color;
+        });
+    
+        const color = d3.scaleOrdinal<string>()
+          .domain(d3.map(graph.nodes, (d) => d.group ?? d.label ?? 'x').keys())
+          .range(vibrantColors);
     
         // highlight sets
         const highlightedNodes = new Set<string>();
@@ -801,18 +819,72 @@
           }
         });
     
-        // nodes
+        // 3D nodes with enhanced styling
         graph.nodes.forEach((n) => {
           if (n.x == null || n.y == null) return;
           const isHL = highlightedNodes.has(String(n.id));
           const r = display.nodeSize;
+          const baseColor = color(n.group ?? n.label ?? 'x');
+          
+          // Make sure opacity is always full for the nodes - fixes dark mode dragging bug
+          ctx.globalAlpha = isHL || highlightedNodes.size === 0 ? 1 : 0.8;
+          
+          // Create 3D effect with gradient
+          const gradient = ctx.createRadialGradient(
+            n.x - r/2.5, n.y - r/2.5, 0,  // Highlight position (top-left)
+            n.x, n.y, r * 1.2             // Full radius with slight expansion
+          );
+          
+          // Get the base color and create highlight/shadow variations
+          const c = d3.color(baseColor);
+          let highlightColor, midColor, shadowColor;
+          
+          if (c) {
+            // Create highlight color (lighter)
+            const highlight = d3.color(baseColor);
+            highlight!.opacity = 1;
+            if (highlight!.formatHsl) {
+              const hsl = d3.hsl(highlight!);
+              hsl.l = Math.min(0.9, hsl.l * 1.6); // Much lighter for highlight
+              highlightColor = hsl.toString();
+            } else {
+              highlightColor = 'white';
+            }
+            
+            // Middle color (base color but ensure full opacity)
+            midColor = baseColor;
+            
+            // Shadow color (darker)
+            const shadow = d3.color(baseColor);
+            shadow!.opacity = 1;
+            if (shadow!.formatHsl) {
+              const hsl = d3.hsl(shadow!);
+              hsl.l = Math.max(0.1, hsl.l * 0.7); // Darker for shadow
+              shadowColor = hsl.toString();
+            } else {
+              shadowColor = 'black';
+            }
+          } else {
+            // Fallbacks if color parsing fails
+            highlightColor = 'white';
+            midColor = baseColor;
+            shadowColor = 'black';
+          }
+          
+          // Set up gradient for 3D effect
+          gradient.addColorStop(0, highlightColor);
+          gradient.addColorStop(0.5, midColor);
+          gradient.addColorStop(1, shadowColor);
+          
+          // Draw the node with 3D effect
           ctx.beginPath();
           ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-          ctx.fillStyle = color(n.group ?? n.label ?? 'x');
-          ctx.globalAlpha = isHL || highlightedNodes.size === 0 ? 1 : 0.8;
+          ctx.fillStyle = gradient;
           ctx.fill();
-          ctx.lineWidth = isHL ? 3 : 1;
-          ctx.strokeStyle = isHL ? '#000' : '#fff';
+          
+          // Add a slight outline for definition
+          ctx.lineWidth = isHL ? 2 : 1;
+          ctx.strokeStyle = isHL ? (dark ? '#fff' : '#000') : (dark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.4)');
           ctx.stroke();
     
           if (zRef.current.k > 1.2 || isHL) {
@@ -931,6 +1003,9 @@
             
             e.subject.fx = transformedX;
             e.subject.fy = transformedY;
+            
+            // Force a render to ensure we don't lose opacity during drag in dark mode
+            render();
           })
           .on('end', (e: d3.D3DragEvent<HTMLCanvasElement, Node, Node>) => {
             simRef.current?.alphaTarget(0);
@@ -942,6 +1017,8 @@
             } else {
               updateCursor();
             }
+            // Make sure to render once more after releasing the drag
+            render();
           });
         sel.call(drag as any);
 
@@ -1098,7 +1175,7 @@
         centerForce: 0.1,
         repelForce: -500,
         linkForce: 1,
-        linkDistance: 40,
+        linkDistance: 60,
         collisionRadius: 2,
         radialRadius: 60,
       });
@@ -1121,7 +1198,7 @@
         enableEdgeBundling: false,
       });
 
-      const [dark, setDark] = useState(false);
+      const [dark, setDark] = useState(true);
       const [sidebarOpen, setSidebarOpen] = useState(true);
       const [selected, setSelected] = useState<Node | null>(null);
 
