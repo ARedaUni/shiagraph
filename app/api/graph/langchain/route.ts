@@ -44,13 +44,13 @@ export async function POST(req: NextRequest) {
     // If streaming is requested
     if (stream) {
       try {
-        // Use the native streaming implementation from LangChainGraph
+        // Get the stream from the service - it already returns a compatible ReadableStream
         const streamResponse = await graphService.streamQueryWithLLM(question);
         
-        // Return the stream directly, with correct typing
-        return new Response(streamResponse as unknown as ReadableStream, {
+        // Return the stream with proper type casting to fix type error
+        return new Response(streamResponse as unknown as ReadableStream<Uint8Array>, {
           headers: {
-            "Content-Type": "text/event-stream",
+            "Content-Type": "text/plain",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
           },

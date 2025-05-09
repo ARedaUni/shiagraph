@@ -474,8 +474,6 @@ Response:`;
   async streamQueryWithLLM(userQ: string): Promise<ReadableStream<Uint8Array>> {
     if (!this.chain) throw new Error("Service not initialised");
     
-    // Removed shouldQueryGraph check
-    
     // Proceed with graph-based streaming logic using LLM
     const schema = await this.getSchema();
     const examples = await this.cypherFewShot.format({ question: userQ });
@@ -511,33 +509,35 @@ Response:`;
     /* -------- LLM stream -------- */
     const llmStream = await this.llm.stream(qaPrompt);
 
-    const chunk = this.streamChunk;
     const self = this; // capture for inner fn
     let fullResponse = "";
     
-    // Create a more compatible ReadableStream implementation
     return new ReadableStream({
       async start(controller) {
         try {
-          // Process the stream in chunks for smooth display
+          // Process the stream chunks from LLM
           for await (const part of llmStream) {
             const txt = typeof part.content === "string"
               ? part.content
               : JSON.stringify(part.content);
             
             fullResponse += txt;
+            // Send the chunk to the client
             controller.enqueue(new TextEncoder().encode(txt));
-            await new Promise((r) => setTimeout(r, 6));
+            
+            // Small delay to improve UI rendering (optional)
+            await new Promise(resolve => setTimeout(resolve, 10));
           }
           
-          // Store the response in history
+          // Store the completed response in history
           self.remember(userQ, fullResponse.trim());
           
           controller.close();
         } catch (err) {
+          console.error("Error in LLM stream processing:", err);
           controller.error(err);
         }
-      },
+      }
     });
   }
 }

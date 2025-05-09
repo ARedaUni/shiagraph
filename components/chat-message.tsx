@@ -106,22 +106,23 @@ export default function ChatMessage({ messages, isLoading }: ChatMessageProps) {
                     {/* Render message content */}
                     {renderMessage(message.content)}
 
+                    {/* Loading indicator for streaming */}
                     {isLoading &&
                       messages.indexOf(message) === messages.length - 1 && (
-                        <span className="animate-pulse" aria-label="Typing">
-                          ...
+                        <span className="animate-pulse ml-1" aria-label="Typing">
+                          &#8230;
                         </span>
                       )}
 
                     {/* Copy button inside the response container */}
-                    {!isLoading && (
+                    {!isLoading && message.content && (
                       <Button
                         onClick={() =>
                           copyResponseToClipboard(message.content, index)
                         }
                         variant="ghost"
                         size="icon"
-                        className="h-4 w-4"
+                        className="h-4 w-4 ml-2"
                       >
                         {copiedMessageId === index ? (
                           <CheckIcon className="w-3 h-3 scale-100 transition-all" />
