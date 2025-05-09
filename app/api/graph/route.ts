@@ -64,7 +64,6 @@ export async function POST(req: NextRequest) {
       const links: any[] = [];
 
       for (const record of result.records) {
-        console.log("Record keys:", record.keys);
         
         // Process each field in the record
         for (const key of record.keys) {

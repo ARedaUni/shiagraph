@@ -23,6 +23,9 @@ export function Chat({ id, onCypherQuery, graphMetadata }: ChatProps) {
   const initialInput = "";
   const [inputContent, setInputContent] = useState<string>(initialInput);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  
+  // Add ref for message container
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Store the chat state in SWR, using the chatId as the key to share states.
   const { data: messages, mutate } = useSWR<Message[]>([id, "messages"], null, {
@@ -33,6 +36,11 @@ export function Chat({ id, onCypherQuery, graphMetadata }: ChatProps) {
   const messagesRef = useRef<Message[]>(messages || []);
   useEffect(() => {
     messagesRef.current = messages || [];
+  }, [messages]);
+
+  // Scroll to bottom whenever messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   const setMessages = useCallback(
@@ -146,19 +154,10 @@ export function Chat({ id, onCypherQuery, graphMetadata }: ChatProps) {
       <ChatMessage 
         isLoading={isLoading} 
         messages={messages} 
-        onFollowUpClick={(question) => {
-          // Create a new message for the follow-up question
-          const newMessage: Message = {
-            id: generateUUID(),
-            content: question,
-            role: "user",
-          };
-          append(newMessage);
-          
-          // Process the follow-up question
-          processInput(question);
-        }}
       />
+      
+      {/* Invisible div at the end for scrolling */}
+      <div ref={messagesEndRef} />
 
       <ChatInput
         chatId={id}

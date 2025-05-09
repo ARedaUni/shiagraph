@@ -83,6 +83,21 @@ const CYPHER_EXAMPLES = [
     query:
       "MATCH (p:Person)-[:KNOWS_TECH]->(t:Technology) RETURN p.name, count(distinct t) AS num_skills ORDER BY num_skills DESC LIMIT 5",
   },
+  {
+    question: "Who is from India?",
+    query:
+      "MATCH (p:Person)-[r]->(c:Country) WHERE c.name = 'India' OR toLower(c.name) = 'india' RETURN p.name LIMIT 10",
+  },
+  {
+    question: "Find people's countries of origin",
+    query:
+      "MATCH (p:Person)-[r]->(c:Country) RETURN p.name, c.name as country ORDER BY p.name LIMIT 20",
+  },
+  {
+    question: "Who is from the USA?",
+    query:
+      "MATCH (p:Person)-[r]->(c) WHERE c.name IN ['USA', 'United States', 'US', 'America'] OR (c:Country AND any(label IN labels(c) WHERE label CONTAINS 'USA' OR label CONTAINS 'United')) RETURN p.name LIMIT 10",
+  }
 ];
 
 /* ------------------------------------------------------------------ */
@@ -107,10 +122,16 @@ RULES
 3. Add LIMIT when the result set could be large.
 4. If the answer requires information not in the schema or is impossible to answer with the graph, output exactly \`// NOT ANSWERABLE\`.
 5. Be strict about what's in the schema - if the schema doesn't explicitly show information required to answer, use \`// NOT ANSWERABLE\`.
+6. When looking for relationships between nodes, be flexible with relationship types - use pattern matching like "-[r]->", not just specific relationship types.
+7. For questions about people's origins, countries, or locations, try different patterns like:
+   - MATCH (p:Person)-[r]->(c:Country)
+   - MATCH (p:Person)-[r]->(c) WHERE c:Country OR any(label in labels(c) WHERE label CONTAINS 'Country')
+   - Use case-insensitive comparisons WHERE toLower(c.name) = 'countryname'
 
-Cypher:`;
+Cypher:
+`;
 
-// ——— QA prompt (friendly answer + ONE follow-up)
+// ——— QA prompt (friendly answer, no follow-up)
 const QA_TEMPLATE = `You are a helpful assistant chatting about people & organisations.
 
 GRAPH SCHEMA:
@@ -133,8 +154,6 @@ IN YOUR RESPONSE
 • If results are empty, say you don't have that specific information in your database.
 • Don't apologize excessively when you don't have information - just be clear about what you do and don't know.
 • Be concise and directly answer the question when possible.
-• **After your answer add exactly one line that starts with**  
-  \`FollowUp:\` and contains one natural question the user might ask next.
 
 A:`;
 
@@ -216,10 +235,33 @@ export class LangChainGraph {
   private parseSchema(raw: string) {
     this.nodeLabels.clear();
     this.relTypes.clear();
-    for (const [, lbl] of raw.matchAll(/:\s*([A-Z0-9_\-]+)/gi))
+    
+    // Extract node labels (more robust pattern)
+    for (const [, lbl] of raw.matchAll(/:\s*([A-Z0-9_\-]+)/gi)) {
       this.nodeLabels.add(lbl);
-    for (const [, rel] of raw.matchAll(/\[:([A-Z0-9_\-]+)\]/gi))
-      this.relTypes.add(rel);
+    }
+    
+    // Extract relationship types with improved pattern matching
+    // Handle various formats like [:REL_TYPE], -[:REL_TYPE]->, [:rel_type], etc.
+    const relPatterns = [
+      /\[:([A-Z0-9_\-]+)\]/gi,                // Basic [:REL]
+      /-\[:([A-Z0-9_\-]+)\]->/gi,             // Direction -[:REL]->
+      /<-\[:([A-Z0-9_\-]+)\]-/gi,             // Direction <-[:REL]-
+      /\(:.*?\)-\[(:|\s)*([A-Z0-9_\-]+)(:|\s)*\]-/gi, // More complex pattern
+      /\(:.*?\)-\[.*?:([A-Z0-9_\-]+).*?\]-/gi // Most flexible pattern
+    ];
+    
+    for (const pattern of relPatterns) {
+      for (const match of raw.matchAll(pattern)) {
+        // The match index depends on the pattern's capture group position
+        const relType = match[1] || match[2];
+        if (relType) this.relTypes.add(relType);
+      }
+    }
+    
+    // Log what we found for debugging
+    console.log("Detected node labels:", Array.from(this.nodeLabels));
+    console.log("Detected relationship types:", Array.from(this.relTypes));
   }
 
   async refreshSchema() {
@@ -237,6 +279,44 @@ export class LangChainGraph {
     
     console.log("Fetching fresh schema from database");
     this.schemaText = await this.graph.getSchema();
+    
+    // If schema doesn't explicitly show relationships, do a direct query
+    if (!this.schemaText.includes("[:") || !this.schemaText.match(/\[.*?:.*?\]/)) {
+      console.log("Schema lacks relationship details, enhancing with direct query");
+      try {
+        // Direct query to get all relationship types
+        const relTypesResult = await this.graph.query(
+          "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType"
+        );
+        
+        // Format and add to schema
+        if (relTypesResult && Array.isArray(relTypesResult) && relTypesResult.length > 0) {
+          const relTypes = relTypesResult.map(r => r.relationshipType).join(', ');
+          this.schemaText += `\n\nRelationship Types: ${relTypes}`;
+        }
+        
+        // Get a sample of each relationship with connecting node labels
+        const sampleRelsResult = await this.graph.query(`
+          MATCH (a)-[r]->(b) 
+          WITH type(r) AS relType, labels(a) AS sourceLabels, labels(b) AS targetLabels, count(*) AS cnt
+          RETURN relType, sourceLabels, targetLabels, cnt 
+          ORDER BY cnt DESC
+          LIMIT 20
+        `);
+        
+        if (sampleRelsResult && Array.isArray(sampleRelsResult) && sampleRelsResult.length > 0) {
+          this.schemaText += "\n\nRelationship Patterns:";
+          for (const rel of sampleRelsResult) {
+            const sourceLabel = rel.sourceLabels[0] || 'Node';
+            const targetLabel = rel.targetLabels[0] || 'Node';
+            this.schemaText += `\n(${sourceLabel})-[:${rel.relType}]->(${targetLabel})`;
+          }
+        }
+      } catch (err) {
+        console.error("Error enhancing schema with relationship info:", err);
+      }
+    }
+    
     this.parseSchema(this.schemaText);
     
     // Update global cache
@@ -337,7 +417,7 @@ Decision:`;
   }
 
   /* -------------------- GENERAL RESPONSE ------------------------- */
-  private async generateGeneralResponse(userQ: string): Promise<{answer: string; followUp: string | null}> {
+  private async generateGeneralResponse(userQ: string): Promise<{answer: string}> {
     const generalPrompt = `
 You are a helpful assistant chatting about people & organisations.
 
@@ -349,24 +429,21 @@ ${userQ}
 
 Provide a brief, helpful response. If the question might be related to specific data that you don't have access to, politely explain that you don't have that information.
 
-At the end of your response, on a new line, add "FollowUp:" followed by a natural follow-up question the user might ask next.
-
 Response:`;
 
     const response = (await this.llm.invoke(generalPrompt)).content.toString().trim();
     
-    // Extract follow-up question
-    const followRE = /^FollowUp:\s*(.+)$/im;
-    const follow = response.match(followRE)?.[1]?.trim() || null;
-    const answer = response.replace(followRE, "").trim();
+    this.remember(userQ, response);
     
-    this.remember(userQ, answer);
-    
-    return { answer, followUp: follow };
+    return { answer: response };
   }
 
-  /* =====================  NON-STREAM  ============================ */
-  async query(userQ: string) {
+  /* ====================== CORE QUERY LOGIC ======================== */
+  private async processQuery(userQ: string): Promise<{
+    answer: string; 
+    cypher?: string;
+    isGraphResponse: boolean;
+  }> {
     if (!this.chain) throw new Error("Service not initialised");
     
     // Evaluate if the question should be answered with the graph
@@ -374,7 +451,8 @@ Response:`;
     
     if (!shouldQuery) {
       console.log(`Not querying graph for "${userQ}": ${reason}`);
-      return this.generateGeneralResponse(userQ);
+      const { answer } = await this.generateGeneralResponse(userQ);
+      return { answer, isGraphResponse: false };
     }
     
     const schema = await this.getSchema();
@@ -391,7 +469,8 @@ Response:`;
     // If no valid Cypher was generated, fall back to general response
     if (!cypher) {
       console.log(`Could not generate valid Cypher for "${userQ}", falling back to general response`);
-      return this.generateGeneralResponse(userQ);
+      const { answer } = await this.generateGeneralResponse(userQ);
+      return { answer, isGraphResponse: false };
     }
     
     // Log the generated Cypher query
@@ -409,7 +488,8 @@ Response:`;
       
     } catch (err) {
       console.error(`Cypher execution error: ${(err as Error).message}`);
-      return this.generateGeneralResponse(userQ);
+      const { answer } = await this.generateGeneralResponse(userQ);
+      return { answer, isGraphResponse: false };
     }
 
     /* -------- 3) answer prompt -------- */
@@ -421,49 +501,48 @@ Response:`;
       result: JSON.stringify(result, null, 2),
     });
 
-    const qa = (await this.llm.invoke(qaPrompt)).content.toString().trim();
-
-    /* split answer / follow-up */
-    const followRE = /^FollowUp:\s*(.+)$/im;
-    const follow = qa.match(followRE)?.[1]?.trim() || null;
-    const answer = qa.replace(followRE, "").trim();
+    const answer = (await this.llm.invoke(qaPrompt)).content.toString().trim();
 
     this.remember(userQ, answer);
 
-    return { answer, followUp: follow, cypher };
+    return { answer, cypher, isGraphResponse: true };
+  }
+
+  /* =====================  NON-STREAM  ============================ */
+  async query(userQ: string) {
+    const result = await this.processQuery(userQ);
+    return {
+      answer: result.answer,
+      cypher: result.cypher
+    };
   }
 
   /* ======================  STREAMING  ============================ */
   async streamQuery(userQ: string): Promise<ReadableStream<Uint8Array>> {
+    const result = await this.processQuery(userQ);
+    
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        // Send the answer
+        controller.enqueue(new TextEncoder().encode(result.answer));
+        controller.close();
+      }
+    });
+  }
+
+  /* ======================  STREAMING WITH LLM  ========================= */
+  async streamQueryWithLLM(userQ: string): Promise<ReadableStream<Uint8Array>> {
     if (!this.chain) throw new Error("Service not initialised");
     
-    // Evaluate if the question should be answered with the graph
-    const { shouldQuery, reason } = await this.shouldQueryGraph(userQ);
+    // First check if this should use the graph or general knowledge
+    const { shouldQuery } = await this.shouldQueryGraph(userQ);
     
     if (!shouldQuery) {
-      console.log(`Not querying graph for "${userQ}": ${reason}`);
-      const { answer, followUp } = await this.generateGeneralResponse(userQ);
-      
-      return new ReadableStream<Uint8Array>({
-        start(controller) {
-          // First send the answer
-          controller.enqueue(new TextEncoder().encode(answer));
-          
-          // Then send the follow-up if available
-          if (followUp) {
-            setTimeout(() => {
-              controller.enqueue(
-                new TextEncoder().encode(`\n\n{{follow_up_question:${followUp}}}`)
-              );
-              controller.close();
-            }, 50);
-          } else {
-            controller.close();
-          }
-        }
-      });
+      // Just return the regular result
+      return this.streamQuery(userQ);
     }
     
+    // Proceed with graph-based streaming logic using LLM
     const schema = await this.getSchema();
     const examples = await this.cypherFewShot.format({ question: userQ });
 
@@ -475,59 +554,15 @@ Response:`;
     const cypherRaw = (await this.llm.invoke(cypherPrompt)).content.toString();
     const cypher = this.cleanCypher(cypherRaw);
     
-    // If no valid Cypher was generated, fall back to general response
     if (!cypher) {
-      console.log(`Could not generate valid Cypher for "${userQ}", falling back to general response`);
-      const { answer, followUp } = await this.generateGeneralResponse(userQ);
-      
-      return new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(answer));
-          if (followUp) {
-            setTimeout(() => {
-              controller.enqueue(
-                new TextEncoder().encode(`\n\n{{follow_up_question:${followUp}}}`)
-              );
-              controller.close();
-            }, 50);
-          } else {
-            controller.close();
-          }
-        }
-      });
+      return this.streamQuery(userQ);
     }
     
-    // Log the generated Cypher query
-    console.log(`Generated Cypher for "${userQ}":\n${cypher}`);
-
     let result;
     try {
       result = await this.graph!.query(cypher);
-      
-      // If the result is empty, consider using general knowledge
-      if (Array.isArray(result) && result.length === 0) {
-        console.log(`Empty results for "${userQ}", considering general response`);
-      }
-      
     } catch (err) {
-      console.error(`Cypher execution error: ${(err as Error).message}`);
-      const { answer, followUp } = await this.generateGeneralResponse(userQ);
-      
-      return new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(answer));
-          if (followUp) {
-            setTimeout(() => {
-              controller.enqueue(
-                new TextEncoder().encode(`\n\n{{follow_up_question:${followUp}}}`)
-              );
-              controller.close();
-            }, 50);
-          } else {
-            controller.close();
-          }
-        }
-      });
+      return this.streamQuery(userQ);
     }
 
     /* -------- build QA prompt -------- */
@@ -560,21 +595,8 @@ Response:`;
             await new Promise((r) => setTimeout(r, 6));
           }
           
-          // After the full response is collected, extract the follow-up question
-          const followUpMatch = fullResponse.match(/FollowUp:\s*(.+?)(\n|$)/i);
-          const follow = followUpMatch ? followUpMatch[1].trim() : null;
-          
-          // Only add the follow-up button if a question was found
-          if (follow) {
-            await new Promise((r) => setTimeout(r, 50));
-            controller.enqueue(
-              new TextEncoder().encode(`\n\n{{follow_up_question:${follow}}}`)
-            );
-          }
-          
-          // Remove the follow-up line from the response we store in history
-          const answer = fullResponse.replace(/FollowUp:\s*(.+?)(\n|$)/i, "").trim();
-          self.remember(userQ, answer);
+          // Store the response in history
+          self.remember(userQ, fullResponse.trim());
           
           controller.close();
         } catch (err) {

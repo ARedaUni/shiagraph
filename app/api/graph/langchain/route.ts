@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     // If streaming is requested
     if (stream) {
       try {
-        const streamResponse = await graphService.streamQuery(question);
+        const streamResponse = await graphService.streamQueryWithLLM(question);
         
         // Cast the stream to the proper type expected by Response
         return new Response(streamResponse as unknown as ReadableStream, {
