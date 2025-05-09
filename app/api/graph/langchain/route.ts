@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { LangChainGraph } from "../../../../services/graph/langChainGraph";
+import { LangChainGraph } from "../../../../services/langChainGraph";
 
 // Create and initialize the graph service
 const graphService = new LangChainGraph({
