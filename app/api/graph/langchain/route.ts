@@ -67,9 +67,9 @@ export async function POST(req: NextRequest) {
 
       // Return the response
       return NextResponse.json({
-        response: response.result,
-        followupQuestions: response.followupQuestions || [],
-        cypher: response.query,
+        response: response.answer,
+        followupQuestions: response.followUp ? [response.followUp] : [],
+        cypher: 'cypher' in response ? response.cypher : null,
       });
     }
   } catch (error: any) {
