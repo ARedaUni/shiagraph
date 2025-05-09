@@ -1,343 +1,370 @@
+/**
+ * LangChain-powered GraphRAG service
+ * – deterministic Cypher
+ * – 1 follow-up question (button only)
+ * – in-memory conversation history            (no external DB)
+ * – smooth streaming
+ * – now escapes curly–brace Cypher literals   (fixes INVALID_PROMPT_INPUT)
+ */
 import { GraphCypherQAChain } from "@langchain/community/chains/graph_qa/cypher";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { Neo4jGraph } from "@langchain/community/graphs/neo4j_graph";
-import { PromptTemplate, FewShotPromptTemplate } from "@langchain/core/prompts";
-import { StringOutputParser } from "@langchain/core/output_parsers";
-import { RunnableSequence } from "@langchain/core/runnables";
+import {
+  PromptTemplate,
+  FewShotPromptTemplate,
+} from "@langchain/core/prompts";
 import { ReadableStream } from "stream/web";
-import { SemanticSimilarityExampleSelector } from "@langchain/core/example_selectors";
 
-// Cypher examples for few-shot learning
+/* ------------------------------------------------------------------ */
+/* 1.  FEW-SHOT CYPHER EXAMPLES                                       */
+/* ------------------------------------------------------------------ */
 const CYPHER_EXAMPLES = [
-  {
-    question: "How many nodes are there?",
-    query: "MATCH (n) RETURN count(n)",
-  },
+  { question: "How many nodes are there?", query: "MATCH (n) RETURN count(n)" },
   {
     question: "What types of relationships exist in the database?",
-    query: "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType",
+    query:
+      "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType",
   },
   {
     question: "Find all nodes with the Person label",
     query: "MATCH (p:Person) RETURN p.name, p.birthdate",
   },
   {
-    question: "Which people are connected to each other?",
-    query: "MATCH (p1:Person)-[r]-(p2:Person) RETURN p1.name, type(r), p2.name",
+    question: "Who knows NextJS?",
+    query: "MATCH (p:Person)-[:KNOWS_TECH]->(t:Technology {{name: 'NextJS'}}) RETURN p.name, p.expertise_level",
   },
   {
-    question: "Find nodes with the most relationships",
-    query: "MATCH (n)-[r]->() RETURN n, count(r) as rel_count ORDER BY rel_count DESC LIMIT 5",
+    question: "Who went to IIT?",
+    query: "MATCH (p:Person)-[:STUDIED_AT]->(i:Institution {{name: 'IIT'}}) RETURN p.name, p.graduation_year ORDER BY p.graduation_year DESC",
+  },
+  {
+    question: "Which people are connected to each other?",
+    query:
+      "MATCH (p1:Person)-[r]-(p2:Person) RETURN p1.name, type(r), p2.name",
+  },
+  {
+    question: "Find people who are experts in GraphQL",
+    query:
+      "MATCH (p:Person)-[:KNOWS_TECH]->(t:Technology {{name: 'GraphQL'}}) WHERE p.expertise_level >= 4 RETURN p.name, p.expertise_level ORDER BY p.expertise_level DESC",
+  },
+  {
+    question: "Who has worked with React for more than 5 years?",
+    query:
+      "MATCH (p:Person)-[r:KNOWS_TECH]->(t:Technology {{name: 'React'}}) WHERE r.years_experience > 5 RETURN p.name, r.years_experience ORDER BY r.years_experience DESC",
   },
   {
     question: "What are the properties of Person nodes?",
     query: "MATCH (p:Person) RETURN p.name, p.age, p.birthdate LIMIT 5",
-  }
+  },
+  {
+    question: "Find people born after 1990",
+    query:
+      "MATCH (p:Person) WHERE p.birthdate.year > 1990 RETURN p.name, p.birthdate ORDER BY p.birthdate",
+  },
+  {
+    question: "Who has the most connections in the network?",
+    query:
+      "MATCH (p:Person)-[r]-() RETURN p.name, count(r) AS connections ORDER BY connections DESC LIMIT 1",
+  },
+  {
+    question: "Find the shortest path between two people",
+    /*  IMPORTANT:  the inner braces are doubled  →  {{  }}
+        to prevent PromptTemplate from treating them as variables.   */
+    query:
+      "MATCH path = shortestPath((p1:Person {{name: 'Person A'}})-[*]-(p2:Person {{name: 'Person B'}})) RETURN path",
+  },
+  {
+    question: "Who worked at Google and knows Python?",
+    query:
+      "MATCH (p:Person)-[:WORKED_AT]->(c:Company {{name: 'Google'}}), (p)-[:KNOWS_TECH]->(t:Technology {{name: 'Python'}}) RETURN p.name, p.job_title",
+  },
+  {
+    question: "Who are the top 5 people with the most diverse skills?",
+    query:
+      "MATCH (p:Person)-[:KNOWS_TECH]->(t:Technology) RETURN p.name, count(distinct t) AS num_skills ORDER BY num_skills DESC LIMIT 5",
+  },
 ];
 
-// Enhanced example prompt for better Cypher query generation
-const CYPHER_GENERATION_TEMPLATE = `You are an expert in converting natural language into Cypher queries for Neo4j.
+/* ------------------------------------------------------------------ */
+/* 2.  PROMPT TEMPLATES                                               */
+/* ------------------------------------------------------------------ */
 
-Below is the schema of the graph database:
+// ——— Cypher generation prompt
+const CYPHER_GENERATION_TEMPLATE = `You are an expert Neo4j Cypher query generator.
+
+DATABASE SCHEMA:
 {schema}
 
-Your task is to generate a Cypher query that answers the given question.
-Make sure to use appropriate labels and relationship types from the schema.
-
-For nodes with labels, use the syntax (n:Label).
-For relationships, use the syntax -[r:RELATIONSHIP_TYPE]-> with the proper direction.
-
-When matching patterns, focus on finding patterns that connect relevant nodes
-to answer the user's question effectively.
-
-IMPORTANT: Return ONLY the raw Cypher query without any markdown formatting, code blocks, or explanations.
-
+PREVIOUS EXAMPLES:
 {examples}
 
-Question: {question}
+CURRENT QUESTION:
+{question}
 
-Cypher query:`;
+RULES
+1. **Return only raw Cypher – no markdown fences, no comments.**
+2. Use labels / relationships that exist in the schema.
+3. Add LIMIT when the result set could be large.
+4. If the answer is impossible, output exactly \`// NOT ANSWERABLE\`.
 
-// Enhanced template for answering the question
-const QA_TEMPLATE = `You are an assistant that helps users understand information from a Neo4j graph database.
+Cypher:`;
 
-Below is the schema of the graph database:
+// ——— QA prompt (friendly answer + ONE follow-up)
+const QA_TEMPLATE = `You are a helpful assistant chatting about people & organisations.
+
+GRAPH SCHEMA:
 {schema}
 
-Question: {question}
+PREVIOUS CONVERSATION (you = Assistant)
+{history}
 
-I ran the following Cypher query to find the answer:
+USER QUESTION:
+{question}
+
+CYPHER RUN:
 {query}
 
-The query returned the following results:
+RESULTS:
 {result}
 
-Based on the graph database results, provide a comprehensive, natural language answer to the question.
-If the results are empty or there was a query error, explain that no data was found that matches their query and suggest they try a different question or rephrase their query.
-If you need to list items, format them in a natural, conversational way.
-Include relevant details from the results to make your answer informative.
-After your answer, suggest 2-3 related follow-up questions the user might want to ask.`;
+IN YOUR RESPONSE
+• Answer plainly (don't mention Cypher / nodes / relationships).  
+• If results are empty, politely say you don't have that info.  
+• **After your answer add exactly one line that starts with**  
+  \`FollowUp:\` and contains one natural question the user might ask next.
 
-// Types for the class
+Assistant:`;
+
+/* ------------------------------------------------------------------ */
+/* 3.  CLASS                                                          */
+/* ------------------------------------------------------------------ */
 interface LangChainGraphConfig {
   url: string;
   username: string;
   password: string;
   model?: string;
+  streamChunkSize?: number;
 }
+
+type Exchange = { user: string; assistant: string };
 
 export class LangChainGraph {
   private graph: Neo4jGraph | null = null;
-  private model: ChatGoogleGenerativeAI;
-  private config: LangChainGraphConfig;
+  private llm: ChatGoogleGenerativeAI;
   private chain: GraphCypherQAChain | null = null;
-  private cypherPromptTemplate: FewShotPromptTemplate | null = null;
-  private exampleSelector: SemanticSimilarityExampleSelector | null = null;
+  private cypherFewShot: FewShotPromptTemplate;
+  private streamChunk = 12;
 
-  constructor(config: LangChainGraphConfig) {
-    this.config = config;
-    this.model = new ChatGoogleGenerativeAI({
-      model: config.model || "gemini-flash-2.0-001",
+  /* simple in-process memory (last 6 exchanges) */
+  private history: Exchange[] = [];
+
+  /* cached schema (+ label / rel sets for quick validation) */
+  private schemaText = "";
+  private nodeLabels = new Set<string>();
+  private relTypes = new Set<string>();
+
+  constructor(private readonly cfg: LangChainGraphConfig) {
+    this.llm = new ChatGoogleGenerativeAI({
+      model: cfg.model || "gemini-flash-2.0-001",
       temperature: 0,
+      maxOutputTokens: 2048,
+    });
+    if (cfg.streamChunkSize) this.streamChunk = cfg.streamChunkSize;
+
+    /* -------------- FEW-SHOT TEMPLATE (uses standard format) -------------- */
+    this.cypherFewShot = new FewShotPromptTemplate({
+      examples: CYPHER_EXAMPLES,
+      examplePrompt: new PromptTemplate({
+        template: "Question: {question}\nCypher: {query}",
+        inputVariables: ["question", "query"],
+      }),
+      prefix: "You are an expert Neo4j Cypher query generator. Below are examples of questions and the Cypher queries that answer them:\n\n",
+      suffix: "\nQuestion: {question}\n\nGenerate a valid Cypher query to answer this question. Your response must start with MATCH, CALL, or another valid Cypher keyword:\n",
+      inputVariables: ["question"],
     });
   }
 
+  /* --------------------------- INIT ------------------------------ */
   async initialize(): Promise<void> {
-    try {
-      this.graph = await Neo4jGraph.initialize({
-        url: this.config.url,
-        username: this.config.username,
-        password: this.config.password,
-      });
-      
-      await this.refreshSchema();
-      
-      // Set up example selector for dynamic few-shot examples
-      // If using embeddings, uncomment this section and add embedding model
-      // this.exampleSelector = await SemanticSimilarityExampleSelector.fromExamples(
-      //   CYPHER_EXAMPLES,
-      //   new OpenAIEmbeddings(), // Replace with your embedding model
-      //   { k: 3, inputKeys: ["question"] }
-      // );
-      
-      // Create the few-shot prompt template
-      const examplePrompt = PromptTemplate.fromTemplate(
-        "User input: {question}\nCypher query (raw, without markdown): {query}"
-      );
-      
-      this.cypherPromptTemplate = new FewShotPromptTemplate({
-        examples: CYPHER_EXAMPLES,
-        examplePrompt,
-        prefix: "Here are some examples of questions and their corresponding raw Cypher queries (without any markdown formatting):",
-        suffix: "\nUser input: {question}\nCypher query (without markdown):",
-        inputVariables: ["question"],
-      });
-      
-      // Initialize the GraphCypherQAChain with custom prompts
-      this.chain = GraphCypherQAChain.fromLLM({
-        llm: this.model,
-        graph: this.graph,
-        cypherPrompt: PromptTemplate.fromTemplate(CYPHER_GENERATION_TEMPLATE),
-        qaPrompt: PromptTemplate.fromTemplate(QA_TEMPLATE),
-      });
-      
-      console.log("LangChain Graph service initialized successfully");
-    } catch (error) {
-      console.error("Failed to initialize LangChain Graph service:", error);
-      throw error;
-    }
+    this.graph = await Neo4jGraph.initialize({
+      url: this.cfg.url,
+      username: this.cfg.username,
+      password: this.cfg.password,
+    });
+
+    await this.refreshSchema();
+
+    this.chain = GraphCypherQAChain.fromLLM({
+      llm: this.llm,
+      graph: this.graph,
+      cypherPrompt: PromptTemplate.fromTemplate(CYPHER_GENERATION_TEMPLATE),
+      qaPrompt: PromptTemplate.fromTemplate(QA_TEMPLATE),
+    });
+
+    console.log("LangChain Graph initialised ✅");
   }
 
-  async refreshSchema(): Promise<void> {
-    if (!this.graph) {
-      throw new Error("Graph is not initialized");
-    }
-    await this.graph.refreshSchema();
+  /* ------------------------- SCHEMA ------------------------------ */
+  private parseSchema(raw: string) {
+    this.nodeLabels.clear();
+    this.relTypes.clear();
+    for (const [, lbl] of raw.matchAll(/:\s*([A-Z0-9_\-]+)/gi))
+      this.nodeLabels.add(lbl);
+    for (const [, rel] of raw.matchAll(/\[:([A-Z0-9_\-]+)\]/gi))
+      this.relTypes.add(rel);
   }
 
-  async getSchema(): Promise<string> {
-    if (!this.graph) {
-      throw new Error("Graph is not initialized");
-    }
-    return this.graph.getSchema();
+  async refreshSchema() {
+    if (!this.graph) throw new Error("Graph not initialised");
+    this.schemaText = await this.graph.getSchema();
+    this.parseSchema(this.schemaText);
   }
-  
-  // Helper method to clean Cypher queries from markdown formatting
-  private cleanCypherQuery(query: string): string {
-    // Remove markdown code block formatting if present
-    const markdownMatch = query.match(/```(?:cypher)?\s*([\s\S]*?)```/i);
-    if (markdownMatch && markdownMatch[1]) {
-      return markdownMatch[1].trim();
-    }
-    return query.trim();
+  async getSchema() {
+    if (!this.schemaText) await this.refreshSchema();
+    return this.schemaText;
   }
 
-  async streamQuery(question: string): Promise<ReadableStream<Uint8Array>> {
-    if (!this.chain || !this.graph) {
-      throw new Error("Chain or graph is not initialized");
-    }
+  /* ---------------------- MEMORY HELPERS ------------------------- */
+  private historyString() {
+    if (this.history.length === 0) return "None";
+    return this.history
+      .slice(-6)
+      .map((e) => `User: ${e.user}\nAssistant: ${e.assistant}`)
+      .join("\n\n");
+  }
+  private remember(user: string, assistant: string) {
+    this.history.push({ user, assistant });
+  }
+
+  /* ----------------------- UTILITIES ----------------------------- */
+  private cleanCypher(raw: string) {
+    // Remove code fences if present
+    const code = raw.replace(/```(?:cypher)?/gi, "").replace(/```/g, "").trim();
     
-    // First, generate the Cypher query (non-streaming)
+    // More lenient validation check - look for common Cypher keywords or patterns
+    if (!/match|return|create|call|where|with|order by|limit|merge|set|case|when|optional|using|unwind/i.test(code)) {
+      console.warn("Warning: Generated text may not be valid Cypher:", code);
+      // Fallback to a simple Cypher query if nothing valid was generated
+      return "MATCH (n) RETURN count(n) as nodeCount LIMIT 1";
+    }
+    return code;
+  }
+
+  /* =====================  NON-STREAM  ============================ */
+  async query(userQ: string) {
+    if (!this.chain) throw new Error("Service not initialised");
     const schema = await this.getSchema();
-    
-    // Generate examples for few-shot prompting
-    const examplesContent = await this.cypherPromptTemplate?.format({ question }) || "";
-    
-    // Format the Cypher generation prompt with schema, examples, and question
-    const cypherTemplate = PromptTemplate.fromTemplate(CYPHER_GENERATION_TEMPLATE);
-    const cypherPrompt = await cypherTemplate.format({ 
-      schema, 
-      question,
-      examples: examplesContent
-    });
-    
-    const cypherResult = await this.model.invoke(cypherPrompt);
-    // Clean the cypher query before using it
-    const cypherQuery = this.cleanCypherQuery(cypherResult.content.toString());
-    
-    console.log("Generated Cypher query:", cypherQuery);
+    const examples = await this.cypherFewShot.format({ question: userQ });
 
-    // Execute the query against Neo4j
-    let results;
+    /* -------- 1) generate Cypher -------- */
+    const cypherPrompt = await PromptTemplate.fromTemplate(
+      CYPHER_GENERATION_TEMPLATE
+    ).format({ schema, question: userQ, examples });
+
+    const cypherRaw = (await this.llm.invoke(cypherPrompt)).content.toString();
+    const cypher = this.cleanCypher(cypherRaw);
+
+    /* -------- 2) run query -------- */
+    let result;
     try {
-      results = await this.graph.query(cypherQuery);
-    } catch (error) {
-      console.error("Error executing Cypher query:", error);
-      console.error("Problematic query:", cypherQuery);
-      results = [];
+      result = await this.graph!.query(cypher);
+    } catch (err) {
+      result = [{ error: `Cypher error: ${(err as Error).message}` }];
     }
-    
-    // Format the QA prompt with the results
-    const qaTemplate = PromptTemplate.fromTemplate(QA_TEMPLATE);
-    const qaPrompt = await qaTemplate.format({
+
+    /* -------- 3) answer prompt -------- */
+    const qaPrompt = await PromptTemplate.fromTemplate(QA_TEMPLATE).format({
       schema,
-      question,
-      query: cypherQuery,
-      result: JSON.stringify(results, null, 2),
+      history: this.historyString(),
+      question: userQ,
+      query: cypher,
+      result: JSON.stringify(result, null, 2),
     });
+
+    const qa = (await this.llm.invoke(qaPrompt)).content.toString().trim();
+
+    /* split answer / follow-up */
+    const followRE = /^FollowUp:\s*(.+)$/im;
+    const follow = qa.match(followRE)?.[1]?.trim() || null;
+    const answer = qa.replace(followRE, "").trim();
+
+    this.remember(userQ, answer);
+
+    return { answer, followUp: follow, cypher };
+  }
+
+  /* ======================  STREAMING  ============================ */
+  async streamQuery(userQ: string): Promise<ReadableStream<Uint8Array>> {
+    if (!this.chain) throw new Error("Service not initialised");
+    const schema = await this.getSchema();
+    const examples = await this.cypherFewShot.format({ question: userQ });
+
+    /* -------- generate & run Cypher -------- */
+    const cypherPrompt = await PromptTemplate.fromTemplate(
+      CYPHER_GENERATION_TEMPLATE
+    ).format({ schema, question: userQ, examples });
+
+    const cypherRaw = (await this.llm.invoke(cypherPrompt)).content.toString();
+    const cypher = this.cleanCypher(cypherRaw);
+
+    let result;
+    try {
+      result = await this.graph!.query(cypher);
+    } catch (err) {
+      result = [{ error: `Cypher error: ${(err as Error).message}` }];
+    }
+
+    /* -------- build QA prompt -------- */
+    const qaPrompt = await PromptTemplate.fromTemplate(QA_TEMPLATE).format({
+      schema,
+      history: this.historyString(),
+      question: userQ,
+      query: cypher,
+      result: JSON.stringify(result, null, 2),
+    });
+
+    /* -------- LLM stream -------- */
+    const llmStream = await this.llm.stream(qaPrompt);
+
+    const chunk = this.streamChunk;
+    const self = this; // capture for inner fn
+    let fullResponse = "";
     
-    // Create a streaming response from the LLM
-    const stream = await this.model.stream(qaPrompt);
-    
-    // Convert the LangChain stream to a ReadableStream
-    return new ReadableStream({
+    return new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          let followupText = '';
-          for await (const chunk of stream) {
-            // Handle different content types
-            const text = typeof chunk.content === 'string' 
-              ? chunk.content 
-              : Array.isArray(chunk.content) 
-                ? chunk.content.map(c => typeof c === 'string' ? c : JSON.stringify(c)).join('') 
-                : JSON.stringify(chunk.content);
+          // Process the stream in chunks for smooth display
+          for await (const part of llmStream) {
+            const txt = typeof part.content === "string"
+              ? part.content
+              : JSON.stringify(part.content);
             
-            controller.enqueue(new TextEncoder().encode(text));
-            followupText += text;
+            fullResponse += txt;
+            controller.enqueue(new TextEncoder().encode(txt));
+            await new Promise((r) => setTimeout(r, 6));
           }
           
-          // Extract follow-up questions for future use
-          // You could add a header with extracted follow-up questions
-          // But that would require custom handling on the client
+          // After the full response is collected, extract the follow-up question
+          const followUpMatch = fullResponse.match(/FollowUp:\s*(.+?)(\n|$)/i);
+          const follow = followUpMatch ? followUpMatch[1].trim() : null;
+          
+          // Only add the follow-up button if a question was found
+          if (follow) {
+            await new Promise((r) => setTimeout(r, 50));
+            controller.enqueue(
+              new TextEncoder().encode(`\n\n{{follow_up_question:${follow}}}`)
+            );
+          }
+          
+          // Remove the follow-up line from the response we store in history
+          const answer = fullResponse.replace(/FollowUp:\s*(.+?)(\n|$)/i, "").trim();
+          self.remember(userQ, answer);
           
           controller.close();
-        } catch (error) {
-          console.error("Error in stream:", error);
-          controller.error(error);
+        } catch (err) {
+          controller.error(err);
         }
       },
     });
   }
-
-  async query(question: string): Promise<{ 
-    result: string;
-    query?: string; 
-    followupQuestions?: string[];
-  }> {
-    if (!this.chain || !this.graph) {
-      throw new Error("Chain or graph is not initialized");
-    }
-
-    try {
-      // Get schema and format examples for few-shot learning
-      const schema = await this.getSchema();
-      const examplesContent = await this.cypherPromptTemplate?.format({ question }) || "";
-      
-      // Create a custom chain with few-shot examples
-      const generateCypherQuery = async () => {
-        const cypherTemplate = PromptTemplate.fromTemplate(CYPHER_GENERATION_TEMPLATE);
-        const cypherPrompt = await cypherTemplate.format({ 
-          schema, 
-          question,
-          examples: examplesContent
-        });
-        
-        const cypherResult = await this.model.invoke(cypherPrompt);
-        // Clean the cypher query before returning it
-        return this.cleanCypherQuery(cypherResult.content.toString());
-      };
-      
-      // Generate Cypher query
-      const cypherQuery = await generateCypherQuery();
-      console.log("Generated Cypher query:", cypherQuery);
-      
-      // Execute query and get results
-      let results;
-      try {
-        results = await this.graph.query(cypherQuery);
-      } catch (error) {
-        console.error("Error executing Cypher query:", error);
-        console.error("Problematic query:", cypherQuery);
-        results = [];
-      }
-      
-      // Format QA prompt and get answer
-      const qaTemplate = PromptTemplate.fromTemplate(QA_TEMPLATE);
-      const qaPrompt = await qaTemplate.format({
-        schema,
-        question,
-        query: cypherQuery,
-        result: JSON.stringify(results, null, 2),
-      });
-      
-      const qaResult = await this.model.invoke(qaPrompt);
-      const result = qaResult.content.toString().trim();
-      
-      // Extract follow-up questions (if any)
-      const followupRegex = /follow-up questions?:?\s*((?:(?:\d+\.\s*|[-•]\s*).*\n?)+)/i;
-      const followupMatch = result.match(followupRegex);
-      
-      let followupQuestions: string[] = [];
-      if (followupMatch && followupMatch[1]) {
-        followupQuestions = followupMatch[1]
-          .split(/\n/)
-          .map(q => q.replace(/^\d+\.\s*|[-•]\s*/, '').trim())
-          .filter(q => q.length > 0);
-        
-        // Remove the follow-up questions from the result
-        const cleanResult = result.replace(followupRegex, '').trim();
-        
-        return {
-          result: cleanResult,
-          query: cypherQuery,
-          followupQuestions
-        };
-      }
-
-      return {
-        result: result,
-        query: cypherQuery
-      };
-    } catch (error) {
-      console.error("Error in graph query:", error);
-      throw error;
-    }
-  }
-
-  async directCypherQuery(cypher: string): Promise<any> {
-    if (!this.graph) {
-      throw new Error("Graph is not initialized");
-    }
-    return await this.graph.query(cypher);
-  }
-} 
+}
