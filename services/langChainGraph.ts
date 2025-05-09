@@ -346,7 +346,7 @@ export class LangChainGraph {
         return { shouldQuery: false, reason: "General conversation question" };
       }
     }
-    
+    console.log("shcema",this.schemaText)
     // Use LLM to evaluate if the question is appropriate for the graph
     const evaluationPrompt = `
 You are evaluating if a user question should be answered by querying a graph database.
@@ -362,10 +362,9 @@ Carefully analyze if the user's question can be meaningfully answered using ONLY
 
 RULES FOR EVALUATION:
 1. Questions about specific entities, relationships, or properties in the schema should be answered by the graph.
-2. Questions about people, organizations, technologies, etc. should ONLY be answered by the graph if those specific entities appear in the schema.
-3. General knowledge questions, greetings, or conversations not directly related to data in the schema should NOT be queried.
-4. If answering the question requires data that isn't clearly represented in the schema, do NOT query the graph.
-5. Common courtesy questions, requests for help with topics outside the schema, or philosophical questions should NOT be queried.
+2. General knowledge questions, greetings, or conversations not directly related to data in the schema should NOT be queried.
+3. Common courtesy questions, requests for help with topics outside the schema, or philosophical questions should NOT be queried.
+ 
 
 Output ONLY one of these options:
 - "QUERY_GRAPH" - if the question is directly answerable using data in the schema
@@ -581,7 +580,8 @@ Response:`;
     const self = this; // capture for inner fn
     let fullResponse = "";
     
-    return new ReadableStream<Uint8Array>({
+    // Create a more compatible ReadableStream implementation
+    return new ReadableStream({
       async start(controller) {
         try {
           // Process the stream in chunks for smooth display

@@ -44,10 +44,34 @@ export async function POST(req: NextRequest) {
     // If streaming is requested
     if (stream) {
       try {
-        const streamResponse = await graphService.streamQueryWithLLM(question);
+        // Create a simple Node.js readable stream for compatibility
+        const { readable, writable } = new TransformStream();
+        const encoder = new TextEncoder();
         
-        // Cast the stream to the proper type expected by Response
-        return new Response(streamResponse as unknown as ReadableStream, {
+        // Start the async process
+        (async () => {
+          try {
+            const writer = writable.getWriter();
+            
+            // Get the response directly without streaming
+            const result = await graphService.query(question);
+            
+            // Then artificially stream it by chunks
+            const chunks = result.answer.match(/.{1,5}/g) || [];
+            for (const chunk of chunks) {
+              await writer.write(encoder.encode(chunk));
+              // Small delay for a streaming effect
+              await new Promise(r => setTimeout(r, 10));
+            }
+            
+            writer.close();
+          } catch (err) {
+            console.error("Error in streaming:", err);
+          }
+        })();
+        
+        // Return the stream
+        return new Response(readable, {
           headers: {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
@@ -68,7 +92,7 @@ export async function POST(req: NextRequest) {
       // Return the response
       return NextResponse.json({
         response: response.answer,
-        followupQuestions: response.followUp ? [response.followUp] : [],
+        followupQuestions: [], // The LangChainGraph doesn't return followup questions
         cypher: 'cypher' in response ? response.cypher : null,
       });
     }
