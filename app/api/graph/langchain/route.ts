@@ -44,34 +44,11 @@ export async function POST(req: NextRequest) {
     // If streaming is requested
     if (stream) {
       try {
-        // Create a simple Node.js readable stream for compatibility
-        const { readable, writable } = new TransformStream();
-        const encoder = new TextEncoder();
+        // Use the native streaming implementation from LangChainGraph
+        const streamResponse = await graphService.streamQueryWithLLM(question);
         
-        // Start the async process
-        (async () => {
-          try {
-            const writer = writable.getWriter();
-            
-            // Get the response directly without streaming
-            const result = await graphService.query(question);
-            
-            // Then artificially stream it by chunks
-            const chunks = result.answer.match(/.{1,5}/g) || [];
-            for (const chunk of chunks) {
-              await writer.write(encoder.encode(chunk));
-              // Small delay for a streaming effect
-              await new Promise(r => setTimeout(r, 10));
-            }
-            
-            writer.close();
-          } catch (err) {
-            console.error("Error in streaming:", err);
-          }
-        })();
-        
-        // Return the stream
-        return new Response(readable, {
+        // Return the stream directly, with correct typing
+        return new Response(streamResponse as unknown as ReadableStream, {
           headers: {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",

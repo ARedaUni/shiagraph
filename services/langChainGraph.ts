@@ -330,59 +330,7 @@ export class LangChainGraph {
   }
 
   /* --------------------- QUERY EVALUATION ------------------------ */
-  private async shouldQueryGraph(question: string): Promise<{shouldQuery: boolean; reason?: string}> {
-    if (!this.schemaText) await this.refreshSchema();
-    
-    // Simple pre-check for obviously non-graph questions
-    const generalQuestions = [
-      "hello", "hi", "hey", "what's up", "how are you", 
-      "good morning", "good afternoon", "good evening",
-      "what can you do", "help", "what are you",
-      "thank", "thanks", "appreciate"
-    ];
-    
-    for (const q of generalQuestions) {
-      if (question.toLowerCase().includes(q)) {
-        return { shouldQuery: false, reason: "General conversation question" };
-      }
-    }
-    console.log("shcema",this.schemaText)
-    // Use LLM to evaluate if the question is appropriate for the graph
-    const evaluationPrompt = `
-You are evaluating if a user question should be answered by querying a graph database.
-
-DATABASE SCHEMA:
-${this.schemaText}
-
-USER QUESTION:
-${question}
-
-The schema above shows all node labels, relationships, and properties available in the graph database.
-Carefully analyze if the user's question can be meaningfully answered using ONLY the data represented in this schema.
-
-RULES FOR EVALUATION:
-1. Questions about specific entities, relationships, or properties in the schema should be answered by the graph.
-2. General knowledge questions, greetings, or conversations not directly related to data in the schema should NOT be queried.
-3. Common courtesy questions, requests for help with topics outside the schema, or philosophical questions should NOT be queried.
- 
-
-Output ONLY one of these options:
-- "QUERY_GRAPH" - if the question is directly answerable using data in the schema
-- "USE_GENERAL_KNOWLEDGE" - if the question requires information outside the schema or is a general conversation
-
-Decision:`;
-
-    const decision = (await this.llm.invoke(evaluationPrompt)).content.toString().trim();
-    
-    if (decision.includes("QUERY_GRAPH")) {
-      return { shouldQuery: true };
-    } else {
-      return { 
-        shouldQuery: false, 
-        reason: "Question is not related to information in the graph database" 
-      };
-    }
-  }
+  // Removing the shouldQueryGraph method completely
 
   /* ---------------------- MEMORY HELPERS ------------------------- */
   private historyString() {
@@ -445,14 +393,7 @@ Response:`;
   }> {
     if (!this.chain) throw new Error("Service not initialised");
     
-    // Evaluate if the question should be answered with the graph
-    const { shouldQuery, reason } = await this.shouldQueryGraph(userQ);
-    
-    if (!shouldQuery) {
-      console.log(`Not querying graph for "${userQ}": ${reason}`);
-      const { answer } = await this.generateGeneralResponse(userQ);
-      return { answer, isGraphResponse: false };
-    }
+    // Removed the shouldQueryGraph evaluation code
     
     const schema = await this.getSchema();
     const examples = await this.cypherFewShot.format({ question: userQ });
@@ -533,13 +474,7 @@ Response:`;
   async streamQueryWithLLM(userQ: string): Promise<ReadableStream<Uint8Array>> {
     if (!this.chain) throw new Error("Service not initialised");
     
-    // First check if this should use the graph or general knowledge
-    const { shouldQuery } = await this.shouldQueryGraph(userQ);
-    
-    if (!shouldQuery) {
-      // Just return the regular result
-      return this.streamQuery(userQ);
-    }
+    // Removed shouldQueryGraph check
     
     // Proceed with graph-based streaming logic using LLM
     const schema = await this.getSchema();
