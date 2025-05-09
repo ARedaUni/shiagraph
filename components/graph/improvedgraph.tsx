@@ -1098,9 +1098,9 @@
         centerForce: 0.1,
         repelForce: -500,
         linkForce: 1,
-        linkDistance: 120,
-        collisionRadius: 30,
-        radialRadius: 200,
+        linkDistance: 40,
+        collisionRadius: 2,
+        radialRadius: 60,
       });
       const [display, setDisplay] = useState<DisplaySettings>({
         showArrows: false,

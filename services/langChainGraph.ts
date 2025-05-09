@@ -105,7 +105,8 @@ RULES
 1. **Return only raw Cypher – no markdown fences, no comments.**
 2. Use labels / relationships that exist in the schema.
 3. Add LIMIT when the result set could be large.
-4. If the answer is impossible, output exactly \`// NOT ANSWERABLE\`.
+4. If the answer requires information not in the schema or is impossible to answer with the graph, output exactly \`// NOT ANSWERABLE\`.
+5. Be strict about what's in the schema - if the schema doesn't explicitly show information required to answer, use \`// NOT ANSWERABLE\`.
 
 Cypher:`;
 
@@ -129,11 +130,13 @@ RESULTS:
 
 IN YOUR RESPONSE
 • Answer plainly (don't mention Cypher / nodes / relationships).  
-• If results are empty, politely say you don't have that info.  
+• If results are empty, say you don't have that specific information in your database.
+• Don't apologize excessively when you don't have information - just be clear about what you do and don't know.
+• Be concise and directly answer the question when possible.
 • **After your answer add exactly one line that starts with**  
   \`FollowUp:\` and contains one natural question the user might ask next.
 
-Assistant:`;
+A:`;
 
 /* ------------------------------------------------------------------ */
 /* 3.  CLASS                                                          */
@@ -147,6 +150,11 @@ interface LangChainGraphConfig {
 }
 
 type Exchange = { user: string; assistant: string };
+
+// Global cached schema to persist between requests
+let globalSchemaCache = "";
+let lastSchemaRefresh = 0;
+const SCHEMA_CACHE_TTL = 1000 * 60 * 10; // 10 minutes in milliseconds
 
 export class LangChainGraph {
   private graph: Neo4jGraph | null = null;
@@ -216,12 +224,85 @@ export class LangChainGraph {
 
   async refreshSchema() {
     if (!this.graph) throw new Error("Graph not initialised");
+    
+    const now = Date.now();
+    
+    // Check if global cache is still valid
+    if (globalSchemaCache && now - lastSchemaRefresh < SCHEMA_CACHE_TTL) {
+      console.log("Using cached schema (global cache)");
+      this.schemaText = globalSchemaCache;
+      this.parseSchema(this.schemaText);
+      return;
+    }
+    
+    console.log("Fetching fresh schema from database");
     this.schemaText = await this.graph.getSchema();
     this.parseSchema(this.schemaText);
+    
+    // Update global cache
+    globalSchemaCache = this.schemaText;
+    lastSchemaRefresh = now;
   }
+  
   async getSchema() {
     if (!this.schemaText) await this.refreshSchema();
     return this.schemaText;
+  }
+
+  /* --------------------- QUERY EVALUATION ------------------------ */
+  private async shouldQueryGraph(question: string): Promise<{shouldQuery: boolean; reason?: string}> {
+    if (!this.schemaText) await this.refreshSchema();
+    
+    // Simple pre-check for obviously non-graph questions
+    const generalQuestions = [
+      "hello", "hi", "hey", "what's up", "how are you", 
+      "good morning", "good afternoon", "good evening",
+      "what can you do", "help", "what are you",
+      "thank", "thanks", "appreciate"
+    ];
+    
+    for (const q of generalQuestions) {
+      if (question.toLowerCase().includes(q)) {
+        return { shouldQuery: false, reason: "General conversation question" };
+      }
+    }
+    
+    // Use LLM to evaluate if the question is appropriate for the graph
+    const evaluationPrompt = `
+You are evaluating if a user question should be answered by querying a graph database.
+
+DATABASE SCHEMA:
+${this.schemaText}
+
+USER QUESTION:
+${question}
+
+The schema above shows all node labels, relationships, and properties available in the graph database.
+Carefully analyze if the user's question can be meaningfully answered using ONLY the data represented in this schema.
+
+RULES FOR EVALUATION:
+1. Questions about specific entities, relationships, or properties in the schema should be answered by the graph.
+2. Questions about people, organizations, technologies, etc. should ONLY be answered by the graph if those specific entities appear in the schema.
+3. General knowledge questions, greetings, or conversations not directly related to data in the schema should NOT be queried.
+4. If answering the question requires data that isn't clearly represented in the schema, do NOT query the graph.
+5. Common courtesy questions, requests for help with topics outside the schema, or philosophical questions should NOT be queried.
+
+Output ONLY one of these options:
+- "QUERY_GRAPH" - if the question is directly answerable using data in the schema
+- "USE_GENERAL_KNOWLEDGE" - if the question requires information outside the schema or is a general conversation
+
+Decision:`;
+
+    const decision = (await this.llm.invoke(evaluationPrompt)).content.toString().trim();
+    
+    if (decision.includes("QUERY_GRAPH")) {
+      return { shouldQuery: true };
+    } else {
+      return { 
+        shouldQuery: false, 
+        reason: "Question is not related to information in the graph database" 
+      };
+    }
   }
 
   /* ---------------------- MEMORY HELPERS ------------------------- */
@@ -241,18 +322,61 @@ export class LangChainGraph {
     // Remove code fences if present
     const code = raw.replace(/```(?:cypher)?/gi, "").replace(/```/g, "").trim();
     
+    // Check for explicit "not answerable" marker
+    if (code.includes("NOT ANSWERABLE")) {
+      console.log("Query explicitly marked as not answerable by LLM");
+      return null;
+    }
+    
     // More lenient validation check - look for common Cypher keywords or patterns
     if (!/match|return|create|call|where|with|order by|limit|merge|set|case|when|optional|using|unwind/i.test(code)) {
       console.warn("Warning: Generated text may not be valid Cypher:", code);
-      // Fallback to a simple Cypher query if nothing valid was generated
-      return "MATCH (n) RETURN count(n) as nodeCount LIMIT 1";
+      return null;
     }
     return code;
+  }
+
+  /* -------------------- GENERAL RESPONSE ------------------------- */
+  private async generateGeneralResponse(userQ: string): Promise<{answer: string; followUp: string | null}> {
+    const generalPrompt = `
+You are a helpful assistant chatting about people & organisations.
+
+PREVIOUS CONVERSATION (you = Assistant)
+${this.historyString()}
+
+USER QUESTION:
+${userQ}
+
+Provide a brief, helpful response. If the question might be related to specific data that you don't have access to, politely explain that you don't have that information.
+
+At the end of your response, on a new line, add "FollowUp:" followed by a natural follow-up question the user might ask next.
+
+Response:`;
+
+    const response = (await this.llm.invoke(generalPrompt)).content.toString().trim();
+    
+    // Extract follow-up question
+    const followRE = /^FollowUp:\s*(.+)$/im;
+    const follow = response.match(followRE)?.[1]?.trim() || null;
+    const answer = response.replace(followRE, "").trim();
+    
+    this.remember(userQ, answer);
+    
+    return { answer, followUp: follow };
   }
 
   /* =====================  NON-STREAM  ============================ */
   async query(userQ: string) {
     if (!this.chain) throw new Error("Service not initialised");
+    
+    // Evaluate if the question should be answered with the graph
+    const { shouldQuery, reason } = await this.shouldQueryGraph(userQ);
+    
+    if (!shouldQuery) {
+      console.log(`Not querying graph for "${userQ}": ${reason}`);
+      return this.generateGeneralResponse(userQ);
+    }
+    
     const schema = await this.getSchema();
     const examples = await this.cypherFewShot.format({ question: userQ });
 
@@ -263,13 +387,29 @@ export class LangChainGraph {
 
     const cypherRaw = (await this.llm.invoke(cypherPrompt)).content.toString();
     const cypher = this.cleanCypher(cypherRaw);
+    
+    // If no valid Cypher was generated, fall back to general response
+    if (!cypher) {
+      console.log(`Could not generate valid Cypher for "${userQ}", falling back to general response`);
+      return this.generateGeneralResponse(userQ);
+    }
+    
+    // Log the generated Cypher query
+    console.log(`Generated Cypher for "${userQ}":\n${cypher}`);
 
     /* -------- 2) run query -------- */
     let result;
     try {
       result = await this.graph!.query(cypher);
+      
+      // If the result is empty, consider using general knowledge
+      if (Array.isArray(result) && result.length === 0) {
+        console.log(`Empty results for "${userQ}", considering general response`);
+      }
+      
     } catch (err) {
-      result = [{ error: `Cypher error: ${(err as Error).message}` }];
+      console.error(`Cypher execution error: ${(err as Error).message}`);
+      return this.generateGeneralResponse(userQ);
     }
 
     /* -------- 3) answer prompt -------- */
@@ -296,6 +436,34 @@ export class LangChainGraph {
   /* ======================  STREAMING  ============================ */
   async streamQuery(userQ: string): Promise<ReadableStream<Uint8Array>> {
     if (!this.chain) throw new Error("Service not initialised");
+    
+    // Evaluate if the question should be answered with the graph
+    const { shouldQuery, reason } = await this.shouldQueryGraph(userQ);
+    
+    if (!shouldQuery) {
+      console.log(`Not querying graph for "${userQ}": ${reason}`);
+      const { answer, followUp } = await this.generateGeneralResponse(userQ);
+      
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          // First send the answer
+          controller.enqueue(new TextEncoder().encode(answer));
+          
+          // Then send the follow-up if available
+          if (followUp) {
+            setTimeout(() => {
+              controller.enqueue(
+                new TextEncoder().encode(`\n\n{{follow_up_question:${followUp}}}`)
+              );
+              controller.close();
+            }, 50);
+          } else {
+            controller.close();
+          }
+        }
+      });
+    }
+    
     const schema = await this.getSchema();
     const examples = await this.cypherFewShot.format({ question: userQ });
 
@@ -306,12 +474,60 @@ export class LangChainGraph {
 
     const cypherRaw = (await this.llm.invoke(cypherPrompt)).content.toString();
     const cypher = this.cleanCypher(cypherRaw);
+    
+    // If no valid Cypher was generated, fall back to general response
+    if (!cypher) {
+      console.log(`Could not generate valid Cypher for "${userQ}", falling back to general response`);
+      const { answer, followUp } = await this.generateGeneralResponse(userQ);
+      
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(answer));
+          if (followUp) {
+            setTimeout(() => {
+              controller.enqueue(
+                new TextEncoder().encode(`\n\n{{follow_up_question:${followUp}}}`)
+              );
+              controller.close();
+            }, 50);
+          } else {
+            controller.close();
+          }
+        }
+      });
+    }
+    
+    // Log the generated Cypher query
+    console.log(`Generated Cypher for "${userQ}":\n${cypher}`);
 
     let result;
     try {
       result = await this.graph!.query(cypher);
+      
+      // If the result is empty, consider using general knowledge
+      if (Array.isArray(result) && result.length === 0) {
+        console.log(`Empty results for "${userQ}", considering general response`);
+      }
+      
     } catch (err) {
-      result = [{ error: `Cypher error: ${(err as Error).message}` }];
+      console.error(`Cypher execution error: ${(err as Error).message}`);
+      const { answer, followUp } = await this.generateGeneralResponse(userQ);
+      
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(answer));
+          if (followUp) {
+            setTimeout(() => {
+              controller.enqueue(
+                new TextEncoder().encode(`\n\n{{follow_up_question:${followUp}}}`)
+              );
+              controller.close();
+            }, 50);
+          } else {
+            controller.close();
+          }
+        }
+      });
     }
 
     /* -------- build QA prompt -------- */

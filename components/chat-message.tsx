@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Button } from "./ui/button";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { ArrowRightIcon } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface ChatMessageProps {
   messages: Message[] | undefined;
@@ -20,6 +21,7 @@ interface ChatMessageProps {
 
 export default function ChatMessage({ messages, isLoading, onFollowUpClick }: ChatMessageProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<number | null>(null);
+  const [showFollowUps, setShowFollowUps] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollToBottom = () => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -28,6 +30,25 @@ export default function ChatMessage({ messages, isLoading, onFollowUpClick }: Ch
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    // Reset follow-ups when loading starts
+    if (isLoading) {
+      setShowFollowUps(false);
+    }
+    
+    // Show follow-ups 500ms after loading ends
+    let timeout: NodeJS.Timeout;
+    if (!isLoading && messages && messages.length > 0) {
+      timeout = setTimeout(() => {
+        setShowFollowUps(true);
+      }, 500);
+    }
+    
+    return () => {
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [isLoading, messages]);
 
   if (messages === undefined || messages.length === 0) {
     return (
@@ -68,15 +89,26 @@ export default function ChatMessage({ messages, isLoading, onFollowUpClick }: Ch
         if (match) {
           const question = match[1];
           return (
-            <div key={i} className="mt-4 mb-2 w-full">
-              <div 
-                onClick={() => handleFollowUpClick(question)}
-                className="w-full p-3 bg-white dark:bg-gray-800 rounded-md shadow-sm overflow-hidden cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors group flex items-center justify-between"
-              >
-                <span className="text-sm font-medium">{question}</span>
-                <ArrowRightIcon className="w-4 h-4 opacity-50 group-hover:opacity-100 transition-opacity" />
-              </div>
-            </div>
+            <AnimatePresence key={i}>
+              {showFollowUps && (
+                <motion.div 
+                  className="mt-4 mb-2 w-full"
+                  initial={{ opacity: 0, scale: 0.8, y: 20 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.8, y: 20 }}
+                  transition={{ duration: 0.3, type: "spring", stiffness: 200 }}
+                >
+                  <div 
+                    onClick={() => handleFollowUpClick(question)}
+                    className="w-full p-3 bg-white dark:bg-gray-800 rounded-md shadow-sm overflow-hidden cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors group flex items-center justify-between relative"
+                  >
+                    <div className="follow-up-border"></div>
+                    <span className="text-sm font-medium">{question}</span>
+                    <ArrowRightIcon className="w-4 h-4 opacity-50 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           );
         }
         
@@ -210,13 +242,35 @@ export default function ChatMessage({ messages, isLoading, onFollowUpClick }: Ch
                   right: 0;
                   bottom: 0;
                   border-radius: 0.375rem;
-                  border: 2px solid transparent;
+                  border: 4px solid transparent;
                   background: linear-gradient(white, white) padding-box,
-                              linear-gradient(90deg, #4F46E5, #A855F7, #4F46E5) border-box;
-                  background-size: 200% 100%;
-                  animation: border-spin 2s linear infinite;
+                              linear-gradient(90deg, #4F46E5, transparent, #A855F7, transparent, #4F46E5) border-box;
+                  background-size: 300% 100%;
+                  animation: border-spin 3s linear infinite;
                   pointer-events: none;
                   z-index: -1;
+                }
+                
+                .follow-up-border {
+                  position: absolute;
+                  top: 0;
+                  left: 0;
+                  right: 0;
+                  bottom: 0;
+                  border-radius: 0.375rem;
+                  border: 2px solid transparent;
+                  background: linear-gradient(white, white) padding-box,
+                              linear-gradient(90deg, #4F46E5, transparent, #A855F7, transparent, #4F46E5) border-box;
+                  background-size: 300% 100%;
+                  opacity: 0;
+                  transition: opacity 0.2s ease;
+                  pointer-events: none;
+                  z-index: -1;
+                }
+                
+                div:hover .follow-up-border {
+                  opacity: 1;
+                  animation: border-spin 3s linear infinite;
                 }
                 
                 @keyframes border-spin {
@@ -224,14 +278,21 @@ export default function ChatMessage({ messages, isLoading, onFollowUpClick }: Ch
                     background-position: 0% 0%;
                   }
                   100% {
-                    background-position: 200% 0%;
+                    background-position: 300% 0%;
                   }
                 }
                 
                 @media (prefers-color-scheme: dark) {
                   .loading-border {
                     background: linear-gradient(#1f2937, #1f2937) padding-box,
-                                linear-gradient(90deg, #4F46E5, #A855F7, #4F46E5) border-box;
+                                linear-gradient(90deg, #4F46E5, transparent, #A855F7, transparent, #4F46E5) border-box;
+                    background-size: 300% 100%;
+                  }
+                  
+                  .follow-up-border {
+                    background: linear-gradient(#1f2937, #1f2937) padding-box,
+                                linear-gradient(90deg, #4F46E5, transparent, #A855F7, transparent, #4F46E5) border-box;
+                    background-size: 300% 100%;
                   }
                 }
               `}</style>
