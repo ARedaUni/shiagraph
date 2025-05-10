@@ -17,7 +17,7 @@ try {
 
 export async function POST(req: NextRequest) {
   try {
-    const { relationshipTypes = [], limit = 100, cypher } = await req.json();
+    const { relationshipTypes = [], limit = 1000, cypher } = await req.json();
 
     // Ensure limit is an integer
     const intLimit = parseInt(limit, 10);

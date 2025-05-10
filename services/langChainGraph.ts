@@ -192,7 +192,7 @@ export class LangChainGraph {
 
   constructor(private readonly cfg: LangChainGraphConfig) {
     this.llm = new ChatGoogleGenerativeAI({
-      model: cfg.model || "gemini-flash-2.0-001",
+      model: cfg.model || "gemini-flash-2.0-lite-001",
       temperature: 0,
       maxOutputTokens: 2048,
     });

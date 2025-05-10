@@ -6,6 +6,7 @@ import Header from "@/components/ui/header";
 import { cn } from "@/lib/utils";
 import Footer from "@/components/footer";
 import { Toaster } from "@/components/ui/sonner";
+import { Analytics } from "@vercel/analytics/next"
 
 const fontSans = FontSans({
   subsets: ['latin'],
@@ -54,7 +55,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <main className="flex-1 w-full h-full">{children}</main>
-        
+          <Analytics />
         </ThemeProvider>
       </body>
     </html>

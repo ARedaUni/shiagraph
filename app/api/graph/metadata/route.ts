@@ -6,7 +6,7 @@ const graphService = new LangChainGraph({
   url: process.env.NEO4J_URI || "",
   username: process.env.NEO4J_USER || "",
   password: process.env.NEO4J_PASSWORD || "",
-  model: process.env.GEMINI_MODEL || "gemini-flash-2.0-001",
+  model: process.env.GEMINI_MODEL || "gemini-flash-2.0-lite-001",
 });
 
 // Initialize the service

@@ -23,7 +23,7 @@ export default function ChatMessage({ messages, isLoading }: ChatMessageProps) {
     return (
       <div className="w-full h-full overflow-y-auto overflow-x-hidden pb-16" style={{ height: "calc(100% - 80px)" }}>
         <div className="flex flex-col h-full justify-center items-center">
-          <div className="text-center text-muted-foreground">Ask a question to start the conversation</div>
+          {/* <div className="text-center text-muted-foreground">Ask a question to start the conversation</div> */}
         </div>
       </div>
     );

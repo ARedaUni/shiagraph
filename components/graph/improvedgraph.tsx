@@ -1186,7 +1186,7 @@
         linkThickness: 1,
       });
       const [layoutType, setLayoutType] = useState<string>('force');
-      const [localNumberOfNodes, setLocalNumberOfNodes] = useState<number>(100);
+      const [localNumberOfNodes, setLocalNumberOfNodes] = useState<number>(1000);
       const [localQueryType, setLocalQueryType] = useState<string>('default');
       const [toggles, setToggles] = useState<AdvancedToggles>({
         enableJitter: false,
